@@ -1,0 +1,48 @@
+# Well-known weak passwords of 15 characters and more: digit runs, keyboard
+# walks (Latin and Russian layouts), repetitions and the name of the service.
+# Compared after lowercasing. Shorter passwords fail the length check anyway.
+123456789012345
+1234567890123456
+12345678901234567
+123456789012345678
+1234567890123456789
+12345678901234567890
+098765432109876
+0987654321098765
+qwertyuiopasdfg
+qwertyuiopasdfgh
+qwertyuiopasdfghjkl
+qwertyuiopasdfghjklzxcvbnm
+qwertyuiop123456
+qwertyuiopqwertyuiop
+qwerty1234567890
+qwerty123456789
+1234567890qwerty
+123456789qwerty
+1q2w3e4r5t6y7u8i
+1q2w3e4r5t6y7u8i9o0p
+1qaz2wsx3edc4rfv
+1qaz2wsx3edc4rfv5tgb
+zaq12wsxcde34rfv
+qazwsxedcrfvtgbyhn
+asdfghjklqwertyuiop
+zxcvbnmasdfghjkl
+abcdefghijklmnop
+abcdefghijklmnopqrstuvwxyz
+passwordpassword
+password1234567
+password12345678
+password123456789
+iloveyouiloveyou
+йцукенгшщзхъфыв
+йцукенгшщзхъфыва
+йцукенгшщзхъфывапролджэ
+фывапролджэячсмить
+пароль1234567890
+пароль123456789
+1234567890йцукен
+finance-tracker
+financetracker1
+financetracker123
+finance_tracker
+finance tracker

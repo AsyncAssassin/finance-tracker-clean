@@ -1,0 +1,246 @@
+syntax = "proto3";
+
+// Package ledger.v1 is the internal API of the ledger service: transactions,
+// budgets and reports of one user. Only the gateway calls it; the gateway
+// authenticates the user and passes the ID in user_id, the ledger trusts
+// that field and scopes every operation to it.
+//
+// Conventions:
+//   - money is int64 kopecks (hundredths of a ruble), so values are exact;
+//   - dates are strings in the form YYYY-MM-DD, an empty string means unset;
+//   - a budget period is a string ("month", "year" or "none"); an empty
+//     string means the ledger's default. The ledger owns the list of
+//     periods, so clients do not need an update when it changes.
+//
+// Errors are gRPC statuses:
+//   - INVALID_ARGUMENT with google.rpc.BadRequest listing the invalid fields;
+//   - FAILED_PRECONDITION with BudgetExceeded when a transaction does not
+//     fit into the budget of its category;
+//   - ALREADY_EXISTS with DuplicateTransaction when external_id is taken;
+//   - NOT_FOUND, CANCELLED, DEADLINE_EXCEEDED and INTERNAL as usual.
+package ledger.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/AsyncAssassin/finance-tracker-clean/api/proto/ledger/v1;ledgerv1";
+
+service LedgerService {
+  // CreateTransaction stores an expense after checking the budget of its
+  // category. A transaction over the budget is rejected and not stored.
+  rpc CreateTransaction(CreateTransactionRequest) returns (CreateTransactionResponse);
+  // ListTransactions returns the expenses matching a filter, newest first.
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse);
+  // ImportTransactions stores many expenses at once, each exactly like
+  // CreateTransaction, and reports the outcome of every row: rows with bad
+  // data do not stop the others. Rows of one category, and rows with the
+  // same external_id, are stored in the order given, so the outcome follows
+  // the order of the source file; other rows are processed in parallel.
+  // The import stops early, marking the remaining rows "canceled", when
+  // storage fails or shortly before the call's deadline, so the results of
+  // the rows stored so far always reach the caller.
+  rpc ImportTransactions(ImportTransactionsRequest) returns (ImportTransactionsResponse);
+  // ExportTransactionsCSV streams the matching expenses as a CSV document
+  // in chunks, so a large export does not hit the message size limit.
+  rpc ExportTransactionsCSV(ExportTransactionsCSVRequest) returns (stream ExportTransactionsCSVResponse);
+  // UpsertBudget creates the budget of a category or replaces it.
+  rpc UpsertBudget(UpsertBudgetRequest) returns (UpsertBudgetResponse);
+  // ListBudgets returns the budgets of the user sorted by category.
+  rpc ListBudgets(ListBudgetsRequest) returns (ListBudgetsResponse);
+  // GetSummary returns the expense report for a date range, from the
+  // report cache when the ledger has one. The response header metadata
+  // "x-cache" tells how it was served: "HIT" or "MISS"; it is absent when
+  // the cache is off or failing.
+  rpc GetSummary(GetSummaryRequest) returns (GetSummaryResponse);
+}
+
+message Transaction {
+  int64 id = 1;
+  int64 amount_kopecks = 2;
+  string category = 3;
+  string description = 4;
+  string date = 5;
+  string external_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message Budget {
+  string category = 1;
+  int64 limit_kopecks = 2;
+  string period = 3;
+}
+
+// TransactionFilter selects transactions; every field is optional.
+message TransactionFilter {
+  string from = 1;
+  string to = 2;
+  string category = 3;
+  // 0 means the default page size; larger values are capped.
+  int32 limit = 4;
+  int32 offset = 5;
+}
+
+message CreateTransactionRequest {
+  int64 user_id = 1;
+  int64 amount_kopecks = 2;
+  string category = 3;
+  string description = 4;
+  // Empty means today in the ledger's time zone.
+  string date = 5;
+  // Optional client key: a second transaction with the same key is
+  // rejected with ALREADY_EXISTS, so a resent request is not stored twice.
+  string external_id = 6;
+}
+
+message CreateTransactionResponse {
+  Transaction transaction = 1;
+}
+
+message ImportTransactionsRequest {
+  int64 user_id = 1;
+  // At most 10 000 rows.
+  repeated ImportRow rows = 2;
+}
+
+message ImportRow {
+  // The line of the row in the source file, echoed in its result.
+  int32 line = 1;
+  int64 amount_kopecks = 2;
+  string category = 3;
+  string description = 4;
+  // Empty means today.
+  string date = 5;
+  // A transaction with this external_id is stored only once: a later row
+  // with it, and a row whose transaction exists, get already_exists, so
+  // importing a file again stores nothing twice.
+  string external_id = 6;
+  // The id column of a CSV export, 0 when absent. A row whose transaction
+  // the user already has is reported as already_exists; otherwise, without
+  // an external_id, "export-{source_id}" becomes its external_id, so an
+  // export imported into another account twice is stored once.
+  int64 source_id = 7;
+}
+
+message ImportTransactionsResponse {
+  // One result per row, in the order of the request.
+  repeated ImportRowResult results = 1;
+}
+
+message ImportRowResult {
+  int32 line = 1;
+  oneof outcome {
+    // The ID of the stored transaction.
+    int64 id = 2;
+    RowError error = 3;
+  }
+}
+
+// RowError is why a row was not stored.
+message RowError {
+  // validation_error, budget_exceeded, already_exists, canceled (the
+  // import stopped before the row) or internal_error.
+  string code = 1;
+  string message = 2;
+  // validation_error: the invalid fields with the reason for each.
+  map<string, string> fields = 3;
+  // budget_exceeded: the budget the row did not fit into.
+  BudgetExceeded budget = 4;
+  // already_exists: the ID of the stored transaction the row repeats.
+  int64 existing_id = 5;
+  // already_exists: effective key, empty when only ownership of source_id is known.
+  string external_id = 6;
+}
+
+message ListTransactionsRequest {
+  int64 user_id = 1;
+  TransactionFilter filter = 2;
+}
+
+message ListTransactionsResponse {
+  repeated Transaction transactions = 1;
+}
+
+message ExportTransactionsCSVRequest {
+  int64 user_id = 1;
+  // limit and offset are ignored: the export has its own cap.
+  TransactionFilter filter = 2;
+}
+
+message ExportTransactionsCSVResponse {
+  // The next part of the document; the parts concatenated in order form
+  // the whole CSV.
+  bytes chunk = 1;
+}
+
+message UpsertBudgetRequest {
+  int64 user_id = 1;
+  string category = 2;
+  int64 limit_kopecks = 3;
+  string period = 4;
+}
+
+message UpsertBudgetResponse {
+  Budget budget = 1;
+  // True when the budget did not exist before.
+  bool created = 2;
+}
+
+message ListBudgetsRequest {
+  int64 user_id = 1;
+}
+
+message ListBudgetsResponse {
+  repeated Budget budgets = 1;
+}
+
+message GetSummaryRequest {
+  int64 user_id = 1;
+  // Both required, inclusive.
+  string from = 2;
+  string to = 3;
+}
+
+message GetSummaryResponse {
+  string from = 1;
+  string to = 2;
+  int64 total_kopecks = 3;
+  repeated CategorySummary categories = 4;
+}
+
+message CategorySummary {
+  string category = 1;
+  int64 spent_kopecks = 2;
+  // Unset when the category has no budget.
+  BudgetUsage budget = 3;
+}
+
+message BudgetUsage {
+  string period = 1;
+  // The limit for the whole report range.
+  int64 limit_kopecks = 2;
+  int64 remaining_kopecks = 3;
+  // Spent as a percentage of the limit, rounded to two decimals.
+  double percent = 4;
+}
+
+// BudgetExceeded is the detail of a FAILED_PRECONDITION status returned
+// when a transaction does not fit into the budget of its category.
+message BudgetExceeded {
+  string category = 1;
+  string period = 2;
+  // The period the transaction falls into, such as "2026-10".
+  string period_label = 3;
+  // The limit for one period.
+  int64 limit_kopecks = 4;
+  // Already spent in that period.
+  int64 spent_kopecks = 5;
+  // The amount of the rejected transaction.
+  int64 amount_kopecks = 6;
+  int64 remaining_kopecks = 7;
+}
+
+// DuplicateTransaction is the detail of an ALREADY_EXISTS status returned
+// when the external_id of a new transaction is already used.
+message DuplicateTransaction {
+  string external_id = 1;
+  int64 existing_id = 2;
+}

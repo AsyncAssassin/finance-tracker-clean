@@ -1,0 +1,20 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+/bin/
+*.exe
+*.test
+# Retain the verified integration coverage profile for reproducible review.
+
+# Локальная конфигурация
+.env
+
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+// Package auth.v1 is the internal API of the auth service: user accounts and
+// the access tokens the gateway checks. Only the gateway calls it.
+//
+// An access token is a JWT signed with HS256. Its subject ("sub") is the user
+// ID; the gateway verifies the signature, the issuer, the audience and the
+// expiry itself, without calling this service.
+//
+// Errors are gRPC statuses:
+//   - INVALID_ARGUMENT with google.rpc.BadRequest listing the invalid fields;
+//   - ALREADY_EXISTS when the email is already registered;
+//   - UNAUTHENTICATED when the email and password match no account; an unknown
+//     email and a wrong password give the same answer;
+//   - INTERNAL as usual.
+package auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/AsyncAssassin/finance-tracker-clean/api/proto/auth/v1;authv1";
+
+service AuthService {
+  // Register creates an account and returns a token for it, so a new user
+  // needs no separate login.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Login checks the credentials and returns a new token.
+  rpc Login(LoginRequest) returns (LoginResponse);
+}
+
+message User {
+  int64 id = 1;
+  // Lowercase; an account is found by its email in any case.
+  string email = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message Token {
+  string access_token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RegisterRequest {
+  string email = 1;
+  // 15 to 128 characters, see the password policy in the README.
+  string password = 2;
+}
+
+message RegisterResponse {
+  User user = 1;
+  Token token = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  User user = 1;
+  Token token = 2;
+}
