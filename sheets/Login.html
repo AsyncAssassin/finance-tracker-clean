@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 14px; margin: 12px; }
+    label { display: block; margin-top: 10px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }
+    .hint { color: #5f6368; font-size: 12px; margin-top: 4px; }
+    .buttons { margin-top: 16px; display: flex; gap: 8px; }
+    button { padding: 6px 12px; }
+    #message { margin-top: 12px; min-height: 2em; }
+    .error { color: #c5221f; }
+  </style>
+</head>
+<body>
+  <div class="hint" id="server">Проверяем адрес сервера…</div>
+  <form id="form" onsubmit="send(false); return false;">
+    <label>Email <input id="email" type="email" autocomplete="username" required></label>
+    <label>Пароль <input id="password" type="password" autocomplete="current-password" required></label>
+    <div class="hint">Для нового аккаунта нужно от 15 символов; удобнее всего фраза из нескольких слов.</div>
+    <div class="buttons">
+      <button type="submit" id="login" disabled>Войти</button>
+      <button type="button" id="register" onclick="send(true)" disabled>Зарегистрироваться</button>
+    </div>
+  </form>
+  <div id="message"></div>
+  <script>
+    let baseUrl = '';
+    google.script.run
+      .withSuccessHandler(function (context) {
+        baseUrl = context.baseUrl;
+        document.getElementById('server').textContent = 'Email и пароль будут отправлены на ' + baseUrl;
+        setBusy(false);
+      })
+      .withFailureHandler(function (err) { document.getElementById('server').textContent = err.message; })
+      .getLoginContext();
+    function send(register) {
+      if (!baseUrl) return;
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const message = document.getElementById('message');
+      if (!email || !password) { message.className = 'error'; message.textContent = 'Введите email и пароль'; return; }
+      setBusy(true);
+      message.className = ''; message.textContent = register ? 'Создаём аккаунт…' : 'Входим…';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          message.textContent = result.message;
+          if (result.ok) setTimeout(google.script.host.close, 1500);
+          else setBusy(false);
+        })
+        .withFailureHandler(function (err) { setBusy(false); message.className = 'error'; message.textContent = err.message; })
+        .login(email, password, register, baseUrl);
+    }
+    function setBusy(busy) {
+      document.getElementById('login').disabled = busy;
+      document.getElementById('register').disabled = busy;
+    }
+  </script>
+</body>
+</html>

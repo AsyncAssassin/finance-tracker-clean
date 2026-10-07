@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 14px; margin: 12px; }
+    label { display: block; margin-top: 10px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 4px; }
+    button { margin-top: 16px; padding: 6px 12px; }
+    #message { margin-top: 12px; min-height: 2em; }
+    .error { color: #c5221f; }
+    .hint { color: #5f6368; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <form id="form" onsubmit="send(); return false;">
+    <label>Дата <input id="date" type="date"></label>
+    <label>Категория <input id="category" required placeholder="еда"></label>
+    <label>Сумма <input id="amount" required inputmode="decimal" placeholder="1250,50"></label>
+    <label>Описание <input id="description" placeholder="продукты на неделю"></label>
+    <button type="submit" id="save">Сохранить</button>
+  </form>
+  <div class="hint">После отправки поля фиксируются. При ошибке связи повторите отправку здесь.
+    Для исправления данных после отказа API откройте новое окно.</div>
+  <div id="message"></div>
+  <script>
+    // Дата по часам пользователя: valueAsDate взял бы дату по UTC.
+    const now = new Date();
+    document.getElementById('date').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    // Один ключ на окно: повторное нажатие после ошибки связи не создаст вторую транзакцию.
+    const key = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'tx-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    let submitted = null;
+    function send() {
+      if (!submitted) submitted = {
+        key: key,
+        date: document.getElementById('date').value,
+        category: document.getElementById('category').value,
+        amount: document.getElementById('amount').value,
+        description: document.getElementById('description').value,
+      };
+      ['date', 'category', 'amount', 'description'].forEach(function (id) {
+        document.getElementById(id).readOnly = true;
+      });
+      const message = document.getElementById('message');
+      document.getElementById('save').disabled = true;
+      message.className = ''; message.textContent = 'Сохраняем…';
+      google.script.run
+        .withSuccessHandler(function (result) {
+          message.textContent = result.message;
+          if (result.ok) setTimeout(google.script.host.close, 1200);
+          else document.getElementById('save').disabled = false;
+        })
+        .withFailureHandler(function (err) {
+          document.getElementById('save').disabled = false;
+          document.getElementById('save').textContent = 'Повторить отправку';
+          message.className = 'error'; message.textContent = err.message;
+        })
+        .addTransaction(submitted);
+    }
+  </script>
+</body>
+</html>
