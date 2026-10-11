@@ -1,0 +1,27 @@
+{
+	admin off
+	log {
+		output stderr
+		format filter {
+			wrap json
+			request delete
+		}
+	}
+	servers {
+		protocols h1 h2
+		timeouts {
+			read_header 10s
+			read_body 65s
+			idle 1m
+		}
+	}
+}
+
+{$FINANCE_DOMAIN} {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+	reverse_proxy gateway:8080
+}

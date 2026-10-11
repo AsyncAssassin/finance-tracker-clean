@@ -1,0 +1,194 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+# The latest patch release of Go 1.26: it carries the security fixes of the
+# standard library (go.mod only sets the minimum version).
+env:
+  GO_VERSION: "1.26.x"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "not formatted:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./... && go vet -tags e2e ./e2e/
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+      - name: go.mod is tidy
+        run: go mod tidy -diff
+      - name: Caddy build module
+        working-directory: deploy/caddy
+        run: go vet -tags nobadger,nomysql,nopgx ./... && go mod tidy -diff
+
+      - name: gosu build module
+        working-directory: deploy/gosu
+        run: go vet github.com/tianon/gosu && go mod tidy -diff
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgres://finance:finance@localhost:5432/finance?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: generate isolated database credentials
+        run: |
+          umask 077
+          for name in POSTGRES_PASSWORD AUTH_DB_PASSWORD LEDGER_DB_PASSWORD AUTH_MIGRATION_PASSWORD LEDGER_MIGRATION_PASSWORD; do
+            printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> .env
+          done
+      - name: start isolated test services
+        run: docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait db redis
+      - name: go test
+        run: |
+          set -a; . ./.env; set +a
+          export PGUSER=finance PGPASSWORD="$POSTGRES_PASSWORD"
+          export TEST_DATABASE_URL="postgres://localhost:5432/finance_test?sslmode=disable"
+          docker compose exec -T db createdb -U finance finance_test
+          go test -race -covermode=atomic -coverpkg=./... -coverprofile=cover.out ./...
+          grep -v '\.pb\.go:' cover.out > cover.out.tmp && mv cover.out.tmp cover.out
+      - name: coverage
+        run: go tool cover -func=cover.out | tail -1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cover.out
+          path: cover.out
+      - name: test service logs
+        if: failure()
+        run: docker compose -f compose.yaml -f compose.dev.yaml logs
+      - name: stop test services
+        if: always()
+        run: docker compose -f compose.yaml -f compose.dev.yaml down -v
+
+  sheets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Apps Script tests
+        run: node --test 'sheets/test/*.test.js'
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: secrets in Git history
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --log-opts=--all --redact=100 --no-banner .
+
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: govulncheck
+        run: make vuln-check
+      - name: Caddy govulncheck
+        working-directory: deploy/caddy
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags nobadger,nomysql,nopgx ./...
+
+      - name: gosu govulncheck
+        working-directory: deploy/gosu
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 github.com/tianon/gosu
+
+  https:
+    runs-on: ubuntu-latest
+    env:
+      FINANCE_DOMAIN: finance.example.test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: validate HTTPS configuration without issuing certificates
+        run: |
+          docker compose --env-file /dev/null -f compose.yaml -f compose.https.yaml config --quiet
+          FINANCE_RELEASE_TAG=ci-validate FINANCE_PGDATA_VOLUME=ci-unused \
+            docker compose --env-file /dev/null -f compose.yaml -f compose.https.yaml -f compose.images.yaml config --quiet
+          docker compose --env-file /dev/null -f compose.yaml -f compose.https.yaml build caddy
+          https_caddy_image=$(docker compose --env-file /dev/null -f compose.yaml -f compose.https.yaml config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["caddy"]["image"])')
+          docker run --rm --network none --read-only --user 65532:65532 \
+            --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges:true \
+            --memory 128m --pids-limit 64 --cpus 0.5 \
+            --tmpfs /data:size=16m,mode=1777 --tmpfs /config:size=16m,mode=1777 \
+            --tmpfs /tmp:size=16m,mode=1777 -e FINANCE_DOMAIN \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            "$https_caddy_image" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      # Builds the images of all services, so no separate build job is needed.
+      - name: start the stack
+        run: |
+          umask 077
+          echo "JWT_SECRET=$(openssl rand -base64 32)" > .env
+          for name in POSTGRES_PASSWORD AUTH_DB_PASSWORD LEDGER_DB_PASSWORD AUTH_MIGRATION_PASSWORD LEDGER_MIGRATION_PASSWORD; do
+            printf '%s=%s\n' "$name" "$(openssl rand -hex 32)" >> .env
+          done
+          docker compose up -d --build --wait
+      - name: README scenario over HTTP
+        run: E2E_BASE_URL=http://localhost:8080 E2E_REQUIRE_CACHE=1 go test -tags e2e -count=1 -v ./e2e/
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: the Google Sheet script against the stack
+        run: E2E_BASE_URL=http://localhost:8080 node --test sheets/test/live.test.js
+      - name: database role boundaries
+        run: |
+          docker compose -f compose.yaml -f compose.dev.yaml up -d --wait db
+          set -a; . ./.env; set +a
+          TEST_ROLE_DATABASE_URL='postgres://localhost:5432/finance?sslmode=disable' \
+            go test -tags e2e -run '^TestDatabaseRoles$' -count=1 -v ./e2e/
+      - name: logs
+        if: failure()
+        run: docker compose logs
+      - name: stop the stack
+        if: always()
+        run: docker compose down -v

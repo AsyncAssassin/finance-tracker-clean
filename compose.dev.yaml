@@ -1,0 +1,22 @@
+# Local Go tests, make run and grpcurl need host access to the backend.
+# Use a separate project, as make db does. Never use this override on the VPS.
+services:
+  db:
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+  redis:
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
+    # This separate development stack allows FLUSHDB in test database 15.
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+  ledger:
+    environment:
+      REDIS_PASSWORD: ""
+    ports: ["127.0.0.1:${LEDGER_GRPC_PORT:-9090}:9090"]
+  auth:
+    ports: ["127.0.0.1:${AUTH_GRPC_PORT:-9091}:9091"]
+
+networks:
+  core:
+    internal: false

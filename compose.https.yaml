@@ -1,0 +1,49 @@
+# Optional public HTTPS. Use with compose.yaml, without compose.dev.yaml.
+# Requires Docker Compose 2.24.4+ for !override.
+services:
+  gateway:
+    # Replace the base mapping, even when HTTP_PORT points to all interfaces.
+    ports: !override ["127.0.0.1:${HTTPS_GATEWAY_PORT:-8080}:8080"]
+
+  caddy:
+    image: ${COMPOSE_PROJECT_NAME}-caddy:2.11.7-patched
+    build:
+      context: .
+      dockerfile: deploy/caddy.Dockerfile
+    networks: [edge]
+    environment:
+      FINANCE_DOMAIN: ${FINANCE_DOMAIN:?Set FINANCE_DOMAIN to the public API hostname}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    # The upstream binary has this file capability, so it must stay in the bounding set.
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    mem_limit: 128m
+    pids_limit: 64
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error --connect-timeout 3 --max-time 5 --resolve \"$${FINANCE_DOMAIN}:443:127.0.0.1\" \"https://$${FINANCE_DOMAIN}/ping\" >/dev/null"]
+      interval: 10s
+      timeout: 6s
+      start_period: 60s
+      retries: 12
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

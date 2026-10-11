@@ -1,0 +1,56 @@
+# Offline linux/amd64 release. Load and verify the release archive before startup.
+# Use after compose.yaml and compose.https.yaml, for an existing installation.
+services:
+  db:
+    build: !reset null
+    image: finance-release-postgres:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  redis:
+    build: !reset null
+    image: finance-release-redis:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  ledger:
+    build: !reset null
+    image: finance-release-ledger:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  auth:
+    build: !reset null
+    image: finance-release-auth:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  auth-migrate:
+    build: !reset null
+    image: finance-release-migrate:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  ledger-migrate:
+    build: !reset null
+    image: finance-release-migrate:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  gateway:
+    build: !reset null
+    image: finance-release-gateway:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+  caddy:
+    build: !reset null
+    image: finance-release-caddy:${FINANCE_RELEASE_TAG:?Set FINANCE_RELEASE_TAG from the release manifest}
+    platform: linux/amd64
+    pull_policy: never
+
+# Require an existing volume so a mistaken project name cannot create an empty DB.
+volumes:
+  pgdata:
+    external: true
+    name: ${FINANCE_PGDATA_VOLUME:?Set FINANCE_PGDATA_VOLUME to the verified existing PostgreSQL volume}
