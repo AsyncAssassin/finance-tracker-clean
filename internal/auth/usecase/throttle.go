@@ -92,7 +92,7 @@ func (a *authThrottle) release(email string) {
 	delete(a.inFlight, email)
 }
 
-func (a *authThrottle) login(email string, known bool) (*loginHistory, error) {
+func (a *authThrottle) login(email string, known bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	history := a.unknown
@@ -114,9 +114,9 @@ func (a *authThrottle) login(email string, known bool) (*loginHistory, error) {
 			h.until = now.Add(authWindow)
 		}
 		if h.failures >= loginsPerEmail {
-			return nil, &domain.ThrottledError{RetryAfter: h.until.Sub(now)}
+			return &domain.ThrottledError{RetryAfter: h.until.Sub(now)}
 		}
-		return h, nil
+		return nil
 	}
 	if len(history) >= maxLoginHistory {
 		for key, h := range history {
@@ -136,11 +136,10 @@ func (a *authThrottle) login(email string, known bool) (*loginHistory, error) {
 		}
 	}
 	if len(history) >= maxLoginHistory {
-		return nil, domain.ErrBusy
+		return domain.ErrBusy
 	}
-	h := &loginHistory{until: now.Add(authWindow)}
-	history[strings.Clone(email)] = h
-	return h, nil
+	history[strings.Clone(email)] = &loginHistory{until: now.Add(authWindow)}
+	return nil
 }
 
 // Count credential failures, not successes, canceled work or backend errors.

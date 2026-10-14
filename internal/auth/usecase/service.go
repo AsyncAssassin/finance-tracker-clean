@@ -139,7 +139,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (Session, e
 	if err != nil && known {
 		return Session{}, fmt.Errorf("find user: %w", err)
 	}
-	if _, err := s.throttle.login(email, known); err != nil {
+	if err := s.throttle.login(email, known); err != nil {
 		return Session{}, err
 	}
 	failed, success := false, false

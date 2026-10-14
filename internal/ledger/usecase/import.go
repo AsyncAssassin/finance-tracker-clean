@@ -195,12 +195,12 @@ func groupRows(rows []ImportRow) [][]int {
 		}
 		parent[rb] = ra // the smallest index is the root
 	}
-	firstOf := map[string]int{}
+	firstRowByKey := map[string]int{}
 	link := func(key string, i int) {
-		if j, ok := firstOf[key]; ok {
+		if j, ok := firstRowByKey[key]; ok {
 			union(i, j)
 		} else {
-			firstOf[key] = i
+			firstRowByKey[key] = i
 		}
 	}
 	for i, r := range rows {
@@ -215,17 +215,18 @@ func groupRows(rows []ImportRow) [][]int {
 			link("external:"+id, i)
 		}
 	}
-	groupOf := map[int]int{}
+	// A later row can merge earlier groups, so collect them after all links.
+	groupIndexByRoot := map[int]int{}
 	var groups [][]int
 	for i := range rows {
 		root := find(i)
-		g, ok := groupOf[root]
+		groupIndex, ok := groupIndexByRoot[root]
 		if !ok {
-			g = len(groups)
-			groupOf[root] = g
+			groupIndex = len(groups)
+			groupIndexByRoot[root] = groupIndex
 			groups = append(groups, nil)
 		}
-		groups[g] = append(groups[g], i)
+		groups[groupIndex] = append(groups[groupIndex], i)
 	}
 	return groups
 }

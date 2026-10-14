@@ -97,13 +97,17 @@ func (s *server) importTransactions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	writeJSON(w, http.StatusOK, buildImportResponse(parsed, results))
+}
+
+func buildImportResponse(parsed csvimport.Result, ledgerResults []ledgerclient.ImportResult) importResponse {
 	resp := importResponse{Total: parsed.Total(), Rows: make([]importRowResult, 0, parsed.Total())}
 	for _, p := range parsed.Problems {
 		resp.Rows = append(resp.Rows, importRowResult{Line: p.Line, Status: "failed", Error: &errorInfo{
 			Code: codeValidation, Message: "row validation failed", Details: p.Fields,
 		}})
 	}
-	for _, res := range results {
+	for _, res := range ledgerResults {
 		if res.Err != nil {
 			resp.Rows = append(resp.Rows, importRowResult{Line: res.Line, Status: "failed", Error: rowErrorInfo(res.Err)})
 			continue
@@ -118,7 +122,7 @@ func (s *server) importTransactions(w http.ResponseWriter, r *http.Request) {
 			resp.Failed++
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 // rowErrorInfo describes why a row was not stored, with the codes and

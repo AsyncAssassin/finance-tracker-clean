@@ -1,6 +1,6 @@
 // Package postgres is the PostgreSQL Repository of accounts. The schema
-// comes from the goose migrations in migrations/auth, applied with Migrate
-// at service startup and tracked in their own version table.
+// comes from the goose migrations in migrations/auth, applied by cmd/migrate
+// with separate migration credentials and tracked in their own version table.
 package postgres
 
 import (
