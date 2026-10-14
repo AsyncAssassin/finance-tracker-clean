@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"slices"
 	"time"
@@ -55,12 +56,17 @@ func (s *server) importTransactions(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, csvimport.MaxBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
+		var timedOut net.Error
 		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, codePayloadTooLarge,
 				fmt.Sprintf("the file must be at most %d MB", csvimport.MaxBytes>>20), nil)
 			return
 		}
-		writeError(w, http.StatusBadRequest, codeInvalidCSV, "could not read the file: "+err.Error(), nil)
+		if errors.As(err, &timedOut) && timedOut.Timeout() {
+			writeError(w, http.StatusRequestTimeout, codeTimeout, "request body was not received in time", nil)
+			return
+		}
+		writeError(w, http.StatusBadRequest, codeInvalidCSV, "could not read the file", nil)
 		return
 	}
 	parsed, err := csvimport.Parse(data)

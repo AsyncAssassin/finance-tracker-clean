@@ -175,12 +175,13 @@ test('the report goes into its sheet with the cache status', () => {
   env.gs.loadReport_();
   assert.equal(env.requests[0].url, 'https://api.example/api/reports/summary?from=2026-10-01&to=2026-10-31');
   assert.deepEqual(sheet.getRange(4, 1, 4, 5).getValues(), [
-    ['Категория', 'Потрачено', 'Лимит за период', 'Остаток', '% бюджета'],
+    ['Категория', 'Потрачено', 'Лимит за период', 'Остаток за диапазон', '% бюджета'],
     ['еда', 4750.5, 5000, 249.5, 95.01],
     ['здоровье', 700, '', '', ''],
     ['Итого', 6750.5, '', '', ''],
   ]);
   assert.equal(sheet.getRange('D2').getValue(), 'Кеш отчёта: HIT');
+  assert.equal(sheet.getRange('A3').getValue(), 'Остаток относится к датам отчёта. Следующий расход проверяется по периоду бюджета на его дату.');
 });
 
 test('budgets are saved row by row and loaded back', () => {

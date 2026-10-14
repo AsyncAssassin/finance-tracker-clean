@@ -132,7 +132,7 @@ func TestScenario(t *testing.T) {
 	c.expect("POST", "/api/auth/login", fmt.Sprintf(`{"email":%q,"password":"зелёный трамвай стоит"}`, email), 401)
 	c.expect("POST", "/api/auth/login", fmt.Sprintf(`{"email":%q,"password":"зелёный трамвай едет"}`, strings.ToUpper(email)), 200)
 
-	c.expect("POST", "/api/budget", `{"category":"Еда","limit":5000}`, 201)
+	c.expect("POST", "/api/budgets", `{"category":"Еда","limit":5000}`, 201)
 	c.expect("POST", "/api/budget", `{"category":"еда","limit":5000,"period":"month"}`, 200)
 	c.expect("POST", "/api/transactions", `{"amount":"4750,50","category":"еда","description":"продукты","date":"2026-10-03","external_id":"e2e-1"}`, 201)
 	over := c.expect("POST", "/api/transactions", `{"amount":500,"category":"еда","date":"2026-10-04"}`, 409)

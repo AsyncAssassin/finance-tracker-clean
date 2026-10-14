@@ -104,7 +104,7 @@ func (s *Service) Import(ctx context.Context, userID int64, rows []ImportRow) ([
 	wg.Wait()
 
 	for _, r := range results {
-		if r.Err == nil {
+		if r.Err == nil || errors.Is(r.Err, ErrCommitUncertain) {
 			s.invalidateReports(ctx, userID)
 			break
 		}
@@ -162,6 +162,10 @@ func (s *Service) stopOnStorageError(ctx context.Context, stop context.CancelCau
 	case errors.As(err, &v), errors.As(err, &b), errors.As(err, &d), errors.Is(err, money.ErrOverflow), errors.Is(err, domain.ErrQuotaExceeded):
 		return err
 	case ctx.Err() != nil:
+		if errors.Is(err, ErrCommitUncertain) {
+			// Keep the cancellation cause and the need to invalidate reports.
+			return errors.Join(context.Cause(ctx), err)
+		}
 		return context.Cause(ctx) // stopped meanwhile: report why
 	default:
 		stop(&ImportStoppedError{Line: line, Err: err})

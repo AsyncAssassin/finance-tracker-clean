@@ -434,12 +434,13 @@ function loadReport_() {
   const table = reportTable_(res.body);
   sheet.getRange(4, 1, Math.max(sheet.getMaxRows() - 3, 1), 5).clearContent();
   sheet.getRange(4, 1, table.length, table[0].length).setValues(literalRows_(table));
+  sheet.getRange('A3').setValue('Остаток относится к датам отчёта. Следующий расход проверяется по периоду бюджета на его дату.');
   sheet.getRange('D1').setValue('Обновлено ' + Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm:ss'));
   sheet.getRange('D2').setValue('Кеш отчёта: ' + (headerValue_(res.headers, 'X-Cache') || 'выключен'));
 }
 
 function reportTable_(summary) {
-  const rows = [['Категория', 'Потрачено', 'Лимит за период', 'Остаток', '% бюджета']];
+  const rows = [['Категория', 'Потрачено', 'Лимит за период', 'Остаток за диапазон', '% бюджета']];
   summary.categories.forEach(function (c) {
     const b = c.budget;
     rows.push([c.category, c.spent, b ? b.limit : '', b ? b.remaining : '', b ? b.percent : '']);

@@ -25,6 +25,7 @@ var (
 	ErrNotFound        = errors.New("not found")
 	ErrUnavailable     = errors.New("service is unavailable")
 	ErrQuotaExceeded   = errors.New("account storage quota exceeded")
+	ErrBusy            = errors.New("service is busy, retry later")
 )
 
 // ValidationError reports invalid request fields with a reason for each.
@@ -71,8 +72,13 @@ func FromStatus(service string, err error) error {
 	msg := st.Message()
 	switch st.Code() {
 	case codes.ResourceExhausted:
-		if info, ok := Detail[*errdetails.ErrorInfo](st); ok && info.GetDomain() == "finance-tracker" && info.GetReason() == "STORAGE_QUOTA" {
-			return ErrQuotaExceeded
+		if info, ok := Detail[*errdetails.ErrorInfo](st); ok && info.GetDomain() == "finance-tracker" {
+			switch info.GetReason() {
+			case "STORAGE_QUOTA":
+				return ErrQuotaExceeded
+			case "LEDGER_BUSY":
+				return ErrBusy
+			}
 		}
 		return fmt.Errorf("%s: %s: %s", service, st.Code(), msg)
 	case codes.InvalidArgument:

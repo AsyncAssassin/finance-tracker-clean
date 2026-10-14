@@ -371,3 +371,39 @@ func TestCanceledRequestDoesNoPasswordWork(t *testing.T) {
 		}
 	}
 }
+
+type cancelingHasher struct{ cancel context.CancelFunc }
+
+func (*cancelingHasher) Hash(context.Context, string) (string, error) { return "test hash", nil }
+func (h *cancelingHasher) Verify(context.Context, string, string) (bool, error) {
+	h.cancel()
+	return true, nil
+}
+
+type observingIssuer struct{ calls int }
+
+func (i *observingIssuer) Issue(int64) (string, time.Time, error) {
+	i.calls++
+	return "synthetic session", time.Now().Add(time.Hour), nil
+}
+
+func TestCancellationDuringSuccessfulVerifyDoesNotIssueSession(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		t.Run(fmt.Sprint(known), func(t *testing.T) {
+			repo := memory.New()
+			if known {
+				if _, err := repo.CreateUser(context.Background(), "anna@example.com", "test hash"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			issuer := &observingIssuer{}
+			svc := usecase.New(repo, &cancelingHasher{cancel}, issuer)
+			session, err := svc.Login(ctx, "anna@example.com", password)
+			if !errors.Is(err, context.Canceled) || session.Token != "" || issuer.calls != 0 {
+				t.Fatalf("canceled verification issued a session: error=%v, calls=%d", err, issuer.calls)
+			}
+		})
+	}
+}

@@ -93,7 +93,8 @@ test('the sheet works against the running API', { skip: !BASE && 'E2E_BASE_URL i
 
   gs.loadReport_();
   const table = report.getRange(4, 1, 5, 5).getValues();
-  assert.deepEqual(table[0], ['Категория', 'Потрачено', 'Лимит за период', 'Остаток', '% бюджета']);
+  assert.deepEqual(table[0], ['Категория', 'Потрачено', 'Лимит за период', 'Остаток за диапазон', '% бюджета']);
+  assert.equal(report.getRange('A3').getValue(), 'Остаток относится к датам отчёта. Следующий расход проверяется по периоду бюджета на его дату.');
   assert.deepEqual(table[4], ['Итого', 3750.5, '', '', '']);
   gs.loadReport_();
   assert.match(report.getRange('D2').getValue(), /^Кеш отчёта: (HIT|выключен)$/);

@@ -2,11 +2,16 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/AsyncAssassin/finance-tracker-clean/internal/ledger/domain"
 	"github.com/AsyncAssassin/finance-tracker-clean/internal/pkg/civil"
 	"github.com/AsyncAssassin/finance-tracker-clean/internal/pkg/money"
 )
+
+// ErrCommitUncertain means storage attempted COMMIT but could not confirm its
+// outcome. The write may be durable: invalidate reports and do not retry it.
+var ErrCommitUncertain = errors.New("transaction commit outcome is unknown")
 
 // Repository is the storage the ledger needs. Implementations live under
 // internal/ledger/repo and know nothing about the business rules.

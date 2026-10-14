@@ -95,7 +95,9 @@ Gateway сначала разбирает CSV. Ledger группирует ст�
 | `report:v2:summary:{instance}:{user}:{version}:{from}:{to}` | Отчёт за период | `REPORT_CACHE_TTL` |
 
 После изменения данных `INCR` версии делает недействительными все прежние отчёты
-пользователя. Они удаляются по TTL; перебирать ключи не требуется.
+пользователя. Инвалидация выполняется также при ошибке подтверждения COMMIT:
+запись могла сохраниться, автоматического повтора нет. Отчёты удаляются по TTL;
+перебирать ключи не требуется.
 Версия читается до построения отчёта. Дополнительный счётчик изменений запрещает
 сохранять результат, если во время его построения прошла запись.
 Запрос, начавшийся одновременно с записью, может увидеть предыдущее состояние;
@@ -148,7 +150,7 @@ Goose применяет миграции в отдельном процессе
 | `POST/GET /api/transactions` | `LedgerService.CreateTransaction`, `ListTransactions` |
 | `POST /api/transactions/import` | `ImportTransactions` |
 | `GET /api/transactions/export.csv` | `ExportTransactionsCSV` |
-| `POST/GET /api/budget` | `UpsertBudget`, `ListBudgets` |
+| `POST/GET /api/budget`, алиас `/api/budgets` | `UpsertBudget`, `ListBudgets` |
 | `GET /api/reports/summary` | `GetSummary` |
 
 CSV-экспорт передаётся серверным потоком по 64 КиБ, обходя предел одного
@@ -164,7 +166,7 @@ CSV-экспорт передаётся серверным потоком по 6
 | `ALREADY_EXISTS` от Auth | 409 `email_taken` |
 | `UNAUTHENTICATED` от Auth | 401 `invalid_credentials` |
 | `PERMISSION_DENIED` от Auth | 403 `registration_closed` |
-| `RESOURCE_EXHAUSTED` с `ErrorInfo: AUTH_BUSY` | 503 `server_busy` |
+| `RESOURCE_EXHAUSTED` с `ErrorInfo: AUTH_BUSY/LEDGER_BUSY` | 503 `server_busy` |
 | `RESOURCE_EXHAUSTED` с `ErrorInfo: ACCOUNT_QUOTA/STORAGE_QUOTA` | 409 `quota_exceeded` |
 | `RESOURCE_EXHAUSTED` от Auth с `RetryInfo` | 429 `rate_limited`, `Retry-After` |
 | Прочие `FAILED_PRECONDITION`, `ALREADY_EXISTS`, `ABORTED` | 409 `conflict` |

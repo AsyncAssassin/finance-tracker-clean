@@ -6,6 +6,7 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -57,10 +58,12 @@ func New(repo Repository, opts ...Option) *Service {
 // a *domain.BudgetExceededError and is not stored.
 func (s *Service) CreateTransaction(ctx context.Context, userID int64, in domain.TransactionInput) (domain.Transaction, error) {
 	created, err := s.createTransaction(ctx, userID, in)
+	if err == nil || errors.Is(err, ErrCommitUncertain) {
+		s.invalidateReports(ctx, userID)
+	}
 	if err != nil {
 		return domain.Transaction{}, err
 	}
-	s.invalidateReports(ctx, userID)
 	return created, nil
 }
 
@@ -154,10 +157,12 @@ func (s *Service) UpsertBudget(ctx context.Context, userID int64, in domain.Budg
 		return domain.Budget{}, false, err
 	}
 	created, err := s.repo.UpsertBudget(ctx, b)
+	if err == nil || errors.Is(err, ErrCommitUncertain) {
+		s.invalidateReports(ctx, userID)
+	}
 	if err != nil {
 		return domain.Budget{}, false, fmt.Errorf("upsert budget: %w", err)
 	}
-	s.invalidateReports(ctx, userID)
 	return b, created, nil
 }
 

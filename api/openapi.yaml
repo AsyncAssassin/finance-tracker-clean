@@ -35,7 +35,9 @@ info:
     выводящая траты категории за свой период сверх лимита, отклоняется с кодом 409.
 
     **Ошибки** всегда имеют одну форму: объект `error` с полями `code`,
-    `message` и необязательным `details`. Любой эндпоинт `/api/*` может
+    `message` и необязательным `details`. Пути с повторными слешами или отдельными
+    сегментами `.` и `..` отклоняются с `400 invalid_request` без перенаправления.
+    Любой эндпоинт `/api/*` может
     ответить `502 ledger_unavailable` или `502 auth_unavailable`, если нужный
     сервис недоступен, и `504 timeout`, если он не ответил вовремя
     (`LEDGER_TIMEOUT`, `AUTH_TIMEOUT`).
@@ -262,7 +264,8 @@ paths:
           in: query
           schema: {type: string}
           description: |
-            Только эта категория (регистр и лишние пробелы не важны). Текст должен быть
+            Только эта категория: пробелы нормализуются, применяется Unicode NFC и простое
+            преобразование в нижний регистр, без языковых правил case folding. Текст должен быть
             корректным UTF-8 без NUL, иначе `400 validation_error` с полем `category`,
             как у остальных текстовых полей; проверка выполняется до обращения к Ledger.
         - name: limit
@@ -315,7 +318,7 @@ paths:
         Ledger, который начинается после разбора файла; перед истечением срока вызова
         Ledger или при сбое хранилища импорт останавливается и возвращает итог:
         недошедшие строки получают статус `canceled`. Файл, не загруженный за срок чтения, получает
-        `400 invalid_csv`.
+        `408 timeout`.
       requestBody:
         required: true
         content:
@@ -344,6 +347,12 @@ paths:
                 error: {code: invalid_csv, message: 'unknown column "ammount"; the columns are: id, date, category, amount, description, external_id', details: {line: 1}}
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "408":
+          description: Тело CSV не получено за IMPORT_TIMEOUT (`timeout`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "413":
           description: Файл больше 5 МБ (`payload_too_large`)
           content:
@@ -374,7 +383,8 @@ paths:
           in: query
           schema: {type: string}
           description: |
-            Только эта категория (регистр и лишние пробелы не важны). Текст должен быть
+            Только эта категория: пробелы нормализуются, применяется Unicode NFC и простое
+            преобразование в нижний регистр, без языковых правил case folding. Текст должен быть
             корректным UTF-8 без NUL, иначе `400 validation_error` с полем `category`;
             проверка выполняется до обращения к Ledger.
       responses:
@@ -396,6 +406,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "500":
           $ref: "#/components/responses/Internal"
+  /api/budgets:
+    $ref: "#/paths/~1api~1budget"
   /api/budget:
     post:
       tags: [budgets]
@@ -470,7 +482,9 @@ paths:
         Для бюджета с периодом `month` лимит в отчёте равен месячному лимиту,
         умноженному на число календарных месяцев, которые затрагивает период
         (аналогично для `year`). Категории с бюджетом попадают в отчёт, даже если
-        трат не было. Диапазон не длиннее 10 лет.
+        трат не было. `remaining` относится к диапазону отчёта и не определяет
+        допустимую сумму следующего расхода: её проверяют за период бюджета,
+        содержащий дату расхода. Диапазон не длиннее 10 лет.
       parameters:
         - name: from
           in: query
@@ -758,7 +772,10 @@ components:
         remaining:
           allOf:
             - $ref: "#/components/schemas/Money"
-          description: Сколько осталось; не бывает отрицательным
+          description: |
+            Неотрицательная разница между лимитом отчёта и тратами за `[from, to]`.
+            Это не допустимая сумма следующего расхода: её проверяют за период
+            бюджета, содержащий дату расхода, с учётом трат вне диапазона отчёта.
         percent:
           type: number
           description: Потрачено в процентах от лимита, округлено до сотых

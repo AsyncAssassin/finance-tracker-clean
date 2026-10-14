@@ -8,6 +8,7 @@ package rest
 import (
 	"log/slog"
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -85,10 +86,20 @@ func (s *server) handler() http.Handler {
 	route(mux, "/api/transactions/export.csv", map[string]http.HandlerFunc{"GET": auth(s.exportTransactions)})
 	route(mux, "/api/transactions/import", map[string]http.HandlerFunc{"POST": auth(oneImportPerUser(s.importTransactions))})
 	route(mux, "/api/budget", map[string]http.HandlerFunc{"POST": auth(s.upsertBudget), "GET": auth(s.listBudgets)})
+	route(mux, "/api/budgets", map[string]http.HandlerFunc{"POST": auth(s.upsertBudget), "GET": auth(s.listBudgets)})
 	route(mux, "/api/reports/summary", map[string]http.HandlerFunc{"GET": auth(s.summary)})
 	mux.HandleFunc("/", s.notFound)
 
-	var h http.Handler = mux
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ServeMux redirects unclean paths with a body that can hold admission
+		// while an unfinished request body is drained. Keep rejection bounded.
+		escapedPath := r.URL.EscapedPath()
+		if strings.TrimSuffix(escapedPath, "/") != strings.TrimSuffix(path.Clean(escapedPath), "/") {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest, "path must not contain repeated slashes or dot segments", nil)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 	h = admission(h)
 	h = recoverer(s.log)(h)
 	h = logRequests(s.log)(h)
@@ -110,10 +121,10 @@ func route(mux *http.ServeMux, path string, handlers map[string]http.HandlerFunc
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", allow)
 		writeError(w, http.StatusMethodNotAllowed, codeMethodNotAllowed,
-			r.Method+" is not allowed for "+path+"; use "+allow, nil)
+			"method not allowed; use "+allow, nil)
 	})
 }
 
 func (s *server) notFound(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotFound, codeNotFound, "no route for "+r.Method+" "+r.URL.Path, nil)
+	writeError(w, http.StatusNotFound, codeNotFound, "route not found", nil)
 }

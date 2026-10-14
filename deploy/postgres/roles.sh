@@ -18,6 +18,13 @@ SET LOCAL log_parameter_max_length_on_error = 0;
 DO $$
 BEGIN
  IF EXISTS (
+  SELECT FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner
+  WHERE (n.nspname='auth' AND r.rolname<>'auth_migrator')
+     OR (n.nspname='ledger' AND r.rolname<>'ledger_migrator')
+ ) THEN
+  RAISE EXCEPTION 'Existing service schemas must be owned by their migration roles; review ownership before running roles.sh';
+ END IF;
+ IF EXISTS (
   SELECT FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member
   WHERE r.rolname IN ('auth_app','ledger_app','auth_migrator','ledger_migrator')
  ) THEN

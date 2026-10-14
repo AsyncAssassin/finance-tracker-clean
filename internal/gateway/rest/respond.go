@@ -173,7 +173,7 @@ func (s *server) writeServiceError(w http.ResponseWriter, r *http.Request, err e
 		writeError(w, http.StatusConflict, "quota_exceeded", authclient.ErrAccountQuota.Error(), nil)
 	case errors.Is(err, upstream.ErrQuotaExceeded):
 		writeError(w, http.StatusConflict, "quota_exceeded", upstream.ErrQuotaExceeded.Error(), nil)
-	case errors.Is(err, authclient.ErrBusy):
+	case errors.Is(err, authclient.ErrBusy), errors.Is(err, upstream.ErrBusy):
 		busy(w)
 	case errors.As(err, &throttled):
 		seconds := max(1, int(math.Ceil(throttled.RetryAfter.Seconds())))

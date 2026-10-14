@@ -330,7 +330,7 @@ func (s *importServer) requireBothImportSlotsFree(t *testing.T) {
 
 // A client that stops sending the body keeps its import slot only until
 // the import's own read deadline, which is longer than the server-wide
-// ReadTimeout; then the handler answers 400, returns and frees the slot,
+// ReadTimeout; then the handler answers 408, returns and frees the slot,
 // without ever calling the ledger.
 func TestImportReadDeadlineReleasesTheSlot(t *testing.T) {
 	t.Parallel()
@@ -346,8 +346,8 @@ func TestImportReadDeadlineReleasesTheSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the answer after the deadline: %v", err)
 	}
-	if res.StatusCode != http.StatusBadRequest || !strings.Contains(body, codeInvalidCSV) {
-		t.Errorf("answer after the deadline = %d %s, want 400 %s", res.StatusCode, body, codeInvalidCSV)
+	if res.StatusCode != http.StatusRequestTimeout || !strings.Contains(body, codeTimeout) {
+		t.Errorf("answer after the deadline = %d %s, want 408 %s", res.StatusCode, body, codeTimeout)
 	}
 	if s.probe.calls.Load() != 0 {
 		t.Error("the ledger was called with an unfinished body")

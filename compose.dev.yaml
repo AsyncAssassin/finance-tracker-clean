@@ -20,3 +20,5 @@ services:
 networks:
   core:
     internal: false
+  cache:
+    internal: false

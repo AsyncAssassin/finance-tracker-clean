@@ -46,7 +46,7 @@ func (r *Repo) InTx(ctx context.Context, fn func(tx usecase.Tx) error) error {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return fmt.Errorf("%w: %w", usecase.ErrCommitUncertain, err)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (r *Repo) UpsertBudget(ctx context.Context, b domain.Budget) (bool, error) 
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", usecase.ErrCommitUncertain, err)
 	}
 	return created, nil
 }

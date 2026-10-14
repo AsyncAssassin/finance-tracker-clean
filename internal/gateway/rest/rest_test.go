@@ -278,6 +278,7 @@ func TestCreateTransactionErrors(t *testing.T) {
 		{name: "conflict without details", body: `{"amount":1,"category":"еда"}`, ledgerErr: fmt.Errorf("%w: busy", upstream.ErrConflict), wantStatus: 409, wantCode: codeConflict},
 		{name: "not found", body: `{"amount":1,"category":"еда"}`, ledgerErr: fmt.Errorf("%w: no such thing", upstream.ErrNotFound), wantStatus: 404, wantCode: codeNotFound},
 		{name: "ledger down", body: `{"amount":1,"category":"еда"}`, ledgerErr: &upstream.UnavailableError{Service: "ledger", Reason: "connection refused"}, wantStatus: 502, wantCode: codeLedgerDown},
+		{name: "ledger busy", body: `{"amount":1,"category":"еда"}`, ledgerErr: upstream.ErrBusy, wantStatus: 503, wantCode: "server_busy"},
 		{name: "ledger timeout", body: `{"amount":1,"category":"еда"}`, ledgerErr: context.DeadlineExceeded, wantStatus: 504, wantCode: codeTimeout},
 		{name: "client went away", body: `{"amount":1,"category":"еда"}`, ledgerErr: context.Canceled, wantStatus: statusClientClosedRequest, wantCode: codeClientClosed},
 		{name: "unknown error", body: `{"amount":1,"category":"еда"}`, ledgerErr: errors.New("disk on fire"), wantStatus: 500, wantCode: codeInternal, wantDetail: "request_id"},
@@ -392,17 +393,44 @@ func TestBudgets(t *testing.T) {
 
 func TestBudgetRouting(t *testing.T) {
 	t.Parallel()
-	h := newHandler(&fakeLedger{})
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		for _, token := range []string{"", "Bearer " + testToken} {
-			res, body := do(t, h, method, "/api/budgets", `{"category":"food","limit":100}`, "Authorization", token)
-			decodeError(t, res, body, http.StatusNotFound, codeNotFound)
-		}
+	ledger := &fakeLedger{
+		upsert: func(_ context.Context, id int64, in ledgerclient.BudgetInput) (ledgerclient.Budget, bool, error) {
+			if id != testUser {
+				t.Errorf("unexpected owner: %d", id)
+			}
+			return ledgerclient.Budget{Category: in.Category, Limit: in.Limit}, true, nil
+		},
+		listBudgets: func(_ context.Context, id int64) ([]ledgerclient.Budget, error) {
+			if id != testUser {
+				t.Errorf("unexpected owner: %d", id)
+			}
+			return []ledgerclient.Budget{}, nil
+		},
 	}
-	res, body := do(t, h, http.MethodDelete, "/api/budget", "")
-	decodeError(t, res, body, http.StatusMethodNotAllowed, codeMethodNotAllowed)
-	if res.Header.Get("Allow") != "GET, POST" {
-		t.Errorf("Allow = %q, want GET, POST", res.Header.Get("Allow"))
+	h := newHandler(ledger)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		var previous string
+		for _, path := range []string{"/api/budget", "/api/budgets"} {
+			res, body := do(t, h, method, path, "", "Authorization", "")
+			decodeError(t, res, body, http.StatusUnauthorized, codeUnauthorized)
+			res, body = do(t, h, method, path, `{"category":"food","limit":100}`)
+			want := http.StatusOK
+			if method == http.MethodPost {
+				want = http.StatusCreated
+			}
+			if res.StatusCode != want {
+				t.Fatalf("%s %s: %d %s", method, path, res.StatusCode, body)
+			}
+			if previous != "" && body != previous {
+				t.Fatal("alias changed the response")
+			}
+			previous = body
+			res, body = do(t, h, http.MethodDelete, path, "")
+			decodeError(t, res, body, http.StatusMethodNotAllowed, codeMethodNotAllowed)
+			if res.Header.Get("Allow") != "GET, POST" {
+				t.Fatal("incorrect Allow header")
+			}
+		}
 	}
 }
 

@@ -3,7 +3,10 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -142,4 +145,24 @@ func TestImportNeedsAToken(t *testing.T) {
 	t.Parallel()
 	res, body := do(t, newHandler(&fakeLedger{}), http.MethodPost, importPath, "category,amount\nеда,1\n", "Content-Type", "text/csv", "Authorization", "")
 	decodeError(t, res, body, http.StatusUnauthorized, codeUnauthorized)
+}
+
+// A failed read must not put socket addresses or arbitrary I/O diagnostics in JSON.
+func TestImportReadErrorIsSafe(t *testing.T) {
+	r := httptest.NewRequest("POST", importPath, nil)
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	r.Header.Set("Content-Type", "text/csv")
+	r.Body = io.NopCloser(failedCSVReader{})
+	w := httptest.NewRecorder()
+	newHandler(&fakeLedger{}).ServeHTTP(w, r)
+	e := decodeError(t, w.Result(), w.Body.String(), 400, codeInvalidCSV)
+	if e.Error.Message != "could not read the file" {
+		t.Fatalf("unsafe error: %s", e.Error.Message)
+	}
+}
+
+type failedCSVReader struct{}
+
+func (failedCSVReader) Read([]byte) (int, error) {
+	return 0, errors.New("read tcp 127.0.0.1:1234->127.0.0.1:5678: synthetic marker")
 }
