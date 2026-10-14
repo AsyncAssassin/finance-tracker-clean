@@ -39,9 +39,8 @@ func (e *DuplicateError) Error() string {
 	return fmt.Sprintf("transaction with external_id %q already exists as #%d", e.ExternalID, e.ExistingID)
 }
 
-// RowError is a failed import row without a typed error. Code is
-// "canceled" when the import stopped before the row, "internal_error"
-// otherwise.
+// RowError carries the code and message of an import-row error without
+// a dedicated Go error type. The HTTP layer forwards both unchanged.
 type RowError struct {
 	Code    string
 	Message string

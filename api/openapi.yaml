@@ -790,7 +790,7 @@ components:
           properties:
             code:
               type: string
-              enum: [invalid_json, invalid_csv, unsupported_media_type, validation_error, invalid_request, unauthorized, invalid_credentials, rate_limited, server_busy, email_taken, budget_exceeded, already_exists, conflict, not_found, method_not_allowed, payload_too_large, ledger_unavailable, auth_unavailable, service_unavailable, timeout, client_closed_request, internal_error]
+              enum: [invalid_json, invalid_csv, unsupported_media_type, validation_error, invalid_request, unauthorized, invalid_credentials, registration_closed, quota_exceeded, rate_limited, server_busy, email_taken, budget_exceeded, already_exists, conflict, not_found, method_not_allowed, payload_too_large, ledger_unavailable, auth_unavailable, service_unavailable, timeout, client_closed_request, internal_error]
             message: {type: string}
             details:
               description: Зависит от кода, поля с ошибками, подробности бюджета, request_id
