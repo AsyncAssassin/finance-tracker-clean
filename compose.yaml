@@ -55,11 +55,11 @@ services:
       context: .
       dockerfile: deploy/redis.Dockerfile
     # A pure cache: no persistence, bounded memory. volatile-lru evicts only
-    # keys with a TTL (cached reports) and never the per-user version keys.
+    # keys with a TTL (reports and budgets) and never the per-user version keys.
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     healthcheck:
-      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli --user ledger ping | grep -qx PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -qx PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -86,9 +86,11 @@ services:
       PGUSER: ledger_app
       PGPASSWORD: ${LEDGER_DB_PASSWORD:-}
       DB_CONNECT_WAIT: ${DB_CONNECT_WAIT:-30s}
-      REDIS_URL: redis://redis:6379/0
+      REDIS_ADDR: ${REDIS_ADDR-redis:6379}
+      REDIS_DB: ${REDIS_DB:-0}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REPORT_CACHE_TTL: ${REPORT_CACHE_TTL:-5m}
+      BUDGET_CACHE_TTL: ${BUDGET_CACHE_TTL:-20s}
       IMPORT_WORKERS: ${IMPORT_WORKERS:-4}
       DB_MAX_CONNS: ${DB_MAX_CONNS:-16}
     # The ledger trusts the user ID. Only the core network can reach it.

@@ -343,6 +343,9 @@ CSV, неизвестная колонка (например, опечатка `
 
 Отчёт `GET /api/reports/summary` Ledger кеширует в Redis на `REPORT_CACHE_TTL` (5 минут).
 Как отчёт получен, видно в заголовке ответа `X-Cache` и в логе ledger.
+Для сообщений HIT/MISS включите `LOG_LEVEL=debug` у Ledger и пересоздайте
+его контейнер с теми же параметрами Compose, что использовались при запуске.
+При уровне `info` заголовок `X-Cache` работает, но сообщения HIT/MISS скрыты.
 Команды ниже добавляют расход на здоровье в 1 рубль. Если до этого выполнены только
 [Примеры](#примеры), итог отчёта станет 2251,50. Выполняйте запросы подряд, до истечения TTL:
 
@@ -361,6 +364,28 @@ curl -fsS -i -X POST "$BASE_URL/api/transactions" \
 curl -fsS -D - -o /dev/null -H "Authorization: Bearer $TOKEN" "$S" | grep -i '^X-Cache:'   # MISS
 docker compose logs ledger | grep "report cache"
 ```
+
+Список `GET /api/budget` кешируется отдельно на `BUDGET_CACHE_TTL` (20 секунд).
+Тело и заголовки API бюджетов сохраняют прежний контракт: HIT/MISS проверяется
+по логам Ledger. Следующий пример повторно задаёт лимит еды в 5000 рублей,
+читает список дважды и затем проверяет истечение TTL:
+
+```sh
+curl -fsS -o /dev/null -X POST "$BASE_URL/api/budget" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"category":"еда","limit":5000,"period":"month"}'
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'X-Request-ID: budget-demo-miss' "$BASE_URL/api/budget"
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'X-Request-ID: budget-demo-hit' "$BASE_URL/api/budget"
+sleep 21
+curl -fsS -H "Authorization: Bearer $TOKEN" -H 'X-Request-ID: budget-demo-expired' "$BASE_URL/api/budget"
+docker compose logs ledger | grep 'budget cache' | grep 'budget-demo-'
+```
+
+В логах ожидаются `budget cache miss`, `budget cache hit`, `budget cache miss`
+с соответствующими request ID. При другом TTL измените время ожидания.
+Повторный POST бюджета, даже с тем же лимитом, сразу инвалидирует оба вида кеша:
+после него первый GET списка и первый GET отчёта дают MISS. Пустой список
+также кешируется; HTTP-ответ сохраняет форму `{"items":[]}`.
 
 Если Redis отключён или недоступен, отчёт приходит без `X-Cache`.
 [Инвалидация и восстановление кеша](architecture.md#кеш-отчётов).

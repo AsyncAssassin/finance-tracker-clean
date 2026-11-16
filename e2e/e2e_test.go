@@ -132,7 +132,31 @@ func TestScenario(t *testing.T) {
 	c.expect("POST", "/api/auth/login", fmt.Sprintf(`{"email":%q,"password":"зелёный трамвай стоит"}`, email), 401)
 	c.expect("POST", "/api/auth/login", fmt.Sprintf(`{"email":%q,"password":"зелёный трамвай едет"}`, strings.ToUpper(email)), 200)
 
-	c.expect("POST", "/api/budgets", `{"category":"Еда","limit":5000}`, 201)
+	for range 2 {
+		if r := c.expect("GET", "/api/budget", "", 200); r.body != "{\"items\":[]}\n" {
+			t.Fatalf("empty budgets: %s", r.body)
+		}
+	}
+	c.expect("POST", "/api/budgets", `{"category":"Еда","limit":5500}`, 201)
+	for _, limit := range []int{5500, 5000} {
+		if limit == 5000 {
+			c.expect("POST", "/api/budget", `{"category":"еда","limit":5000,"period":"month"}`, 200)
+		}
+		for range 2 {
+			r := c.expect("GET", "/api/budgets", "", 200)
+			var budgets struct {
+				Items []struct {
+					Category string  `json:"category"`
+					Limit    float64 `json:"limit"`
+					Period   string  `json:"period"`
+				} `json:"items"`
+			}
+			r.json(t, &budgets)
+			if len(budgets.Items) != 1 || budgets.Items[0].Category != "еда" || budgets.Items[0].Limit != float64(limit) || budgets.Items[0].Period != "month" {
+				t.Fatalf("stale budget list: %s", r.body)
+			}
+		}
+	}
 	c.expect("POST", "/api/budget", `{"category":"еда","limit":5000,"period":"month"}`, 200)
 	c.expect("POST", "/api/transactions", `{"amount":"4750,50","category":"еда","description":"продукты","date":"2026-10-03","external_id":"e2e-1"}`, 201)
 	over := c.expect("POST", "/api/transactions", `{"amount":500,"category":"еда","date":"2026-10-04"}`, 409)

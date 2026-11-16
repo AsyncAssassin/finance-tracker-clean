@@ -44,8 +44,9 @@ does not create duplicates; cancellation stops remaining work and preserves
 committed rows. [Import design](docs/architecture.md#параллельный-импорт).
 
 **Cache protection against stale writes.** A user data version is part of each
-report key. Budget or expense changes invalidate previous reports; if Redis
-fails, reports are built from PostgreSQL. This mechanism supports one Ledger
+report and budget-list key. Budget or expense changes invalidate both caches;
+if Redis fails, data is read from PostgreSQL. The default TTL is 5 minutes for
+reports and 20 seconds for budget lists; both are configurable. This mechanism supports one Ledger
 instance. [Cache design](docs/architecture.md#кеш-отчётов).
 
 ## Architecture
@@ -108,7 +109,7 @@ and Ledger.
 
 **API:** [local Swagger UI](http://localhost:8080/docs),
 [OpenAPI specification](api/openapi.yaml).
-Running the Go services outside containers requires Go 1.26.9 or later:
+Running the Go services outside containers requires Go 1.26.11 or later:
 [local development](docs/operations.md#локальная-разработка).
 
 ## API example
@@ -225,5 +226,8 @@ Detailed guides and the security policy are in Russian.
 | [Demo](docs/demo.md) | Budgets, expenses, a rejected expense and a report |
 | [Project criteria](docs/assessment.md) | Assignment mapping and assessment steps |
 
-This project is part of a Go course. The [assignment mapping](docs/assessment.md)
-connects requirements to the implementation and verification scenarios.
+Author: Artur Iusupov.
+
+This project combines the final assignments for the Go and NoSQL database courses.
+The [assignment mapping](docs/assessment.md) connects requirements to the
+implementation and verification scenarios.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,7 +13,7 @@ var secret = strings.Repeat("test", 8) // Synthetic 32-byte key for configuratio
 var allKeys = []string{
 	"HTTP_ADDR", "GRPC_ADDR", "LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT",
 	"LEDGER_GRPC_ADDR", "LEDGER_TIMEOUT", "AUTH_GRPC_ADDR", "AUTH_TIMEOUT",
-	"DATABASE_URL", "DB_CONNECT_WAIT", "JWT_SECRET", "JWT_TTL", "REDIS_URL", "REPORT_CACHE_TTL", "IMPORT_TIMEOUT", "IMPORT_WORKERS", "DB_MAX_CONNS",
+	"DATABASE_URL", "DB_CONNECT_WAIT", "JWT_SECRET", "JWT_TTL", "REDIS_ADDR", "REDIS_DB", "REPORT_CACHE_TTL", "BUDGET_CACHE_TTL", "IMPORT_TIMEOUT", "IMPORT_WORKERS", "DB_MAX_CONNS",
 }
 
 // clearEnv unsets every variable and sets the required secret.
@@ -20,6 +21,9 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range allKeys {
 		t.Setenv(key, "")
+	}
+	if err := os.Unsetenv("REDIS_ADDR"); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("JWT_SECRET", secret)
 	t.Setenv("AUTH_REGISTRATION_EMAILS", "")
@@ -97,7 +101,7 @@ func TestLoadLedgerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Ledger{GRPCAddr: "localhost:9090", LogLevel: "info", LogFormat: "json", ShutdownTimeout: 10 * time.Second, DBConnectWait: 30 * time.Second, ReportCacheTTL: 5 * time.Minute, ImportWorkers: 4, DBMaxConns: 16}
+	want := Ledger{GRPCAddr: "localhost:9090", LogLevel: "info", LogFormat: "json", ShutdownTimeout: 10 * time.Second, DBConnectWait: 30 * time.Second, RedisAddr: "localhost:6379", ReportCacheTTL: 5 * time.Minute, BudgetCacheTTL: 20 * time.Second, ImportWorkers: 4, DBMaxConns: 16}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("LoadLedger() = %+v, want %+v", cfg, want)
 	}
@@ -111,7 +115,9 @@ func TestLoadLedgerFromEnv(t *testing.T) {
 	t.Setenv("SHUTDOWN_TIMEOUT", "2s")
 	t.Setenv("DATABASE_URL", "postgres://u:p@db:5432/finance")
 	t.Setenv("DB_CONNECT_WAIT", "5s")
-	t.Setenv("REDIS_URL", "redis://redis:6379/0")
+	t.Setenv("REDIS_ADDR", "redis:6379")
+	t.Setenv("REDIS_DB", "3")
+	t.Setenv("BUDGET_CACHE_TTL", "10s")
 	t.Setenv("REPORT_CACHE_TTL", "30s")
 	t.Setenv("IMPORT_WORKERS", "8")
 	cfg, err := LoadLedger()
@@ -119,7 +125,7 @@ func TestLoadLedgerFromEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Ledger{GRPCAddr: "127.0.0.1:9191", LogLevel: "warn", LogFormat: "text", ShutdownTimeout: 2 * time.Second, DatabaseURL: "postgres://u:p@db:5432/finance", DBConnectWait: 5 * time.Second,
-		RedisURL: "redis://redis:6379/0", ReportCacheTTL: 30 * time.Second, ImportWorkers: 8, DBMaxConns: 16}
+		RedisAddr: "redis:6379", RedisDB: 3, ReportCacheTTL: 30 * time.Second, BudgetCacheTTL: 10 * time.Second, ImportWorkers: 8, DBMaxConns: 16}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("LoadLedger() = %+v, want %+v", cfg, want)
 	}
@@ -131,6 +137,16 @@ func TestLoadLedgerRejectsBadValues(t *testing.T) {
 		{"DB_CONNECT_WAIT", "forever"},
 		{"REPORT_CACHE_TTL", "0s"},
 		{"REPORT_CACHE_TTL", "long"},
+		{"BUDGET_CACHE_TTL", "0s"},
+		{"BUDGET_CACHE_TTL", "-1s"},
+		{"BUDGET_CACHE_TTL", "long"},
+		{"REDIS_DB", "-1"},
+		{"REDIS_DB", "abc"},
+		{"REDIS_ADDR", "localhost"},
+		{"REDIS_ADDR", "localhost:0"},
+		{"REDIS_ADDR", "localhost:65536"},
+		{"REDIS_ADDR", "redis://localhost:6379"},
+		{"REDIS_ADDR", "user:password@localhost:6379"},
 		{"IMPORT_WORKERS", "0"},
 		{"IMPORT_WORKERS", "65"},
 		{"IMPORT_WORKERS", "four"},
@@ -142,6 +158,26 @@ func TestLoadLedgerRejectsBadValues(t *testing.T) {
 		if _, err := LoadLedger(); err == nil {
 			t.Errorf("%s=%q was accepted", tc.key, tc.value)
 		}
+	}
+}
+
+func TestRedisAddressAndPassword(t *testing.T) {
+	for _, addr := range []string{"", "cache.example.com:6380", "[::1]:6379"} {
+		t.Run(addr, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("REDIS_ADDR", addr)
+			t.Setenv("REDIS_PASSWORD", "synthetic-private-password")
+			cfg, err := LoadLedger()
+			if err != nil || cfg.RedisAddr != addr || cfg.RedisPassword != "synthetic-private-password" {
+				t.Fatalf("Redis configuration: %v", err)
+			}
+		})
+	}
+	clearEnv(t)
+	t.Setenv("REDIS_ADDR", "synthetic-private-password@localhost:6379")
+	_, err := LoadLedger()
+	if err == nil || strings.Contains(err.Error(), "synthetic-private-password") {
+		t.Fatal("invalid address accepted or exposed")
 	}
 }
 

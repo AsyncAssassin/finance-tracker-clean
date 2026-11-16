@@ -1,5 +1,5 @@
 # Один Dockerfile на все сервисы: SERVICE выбирает каталог в cmd/.
-FROM golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c AS build
+FROM golang:1.26.11-alpine3.23@sha256:23f198931d4bd83b4f5a613bd75656257ae8bf832dcbc2db80e1050b5219ca2a AS build
 ARG SERVICE=gateway
 WORKDIR /src
 COPY go.mod go.sum* ./

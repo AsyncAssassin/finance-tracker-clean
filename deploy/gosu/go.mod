@@ -1,6 +1,6 @@
 module github.com/AsyncAssassin/finance-tracker-clean/deploy/gosu
 
-go 1.26.9
+go 1.26.11
 
 require (
 	github.com/moby/sys/user v0.4.1 // indirect

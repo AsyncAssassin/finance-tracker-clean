@@ -28,6 +28,13 @@ func (c *delayedCache) Set(context.Context, string, domain.Summary) error {
 	c.sets++
 	return nil
 }
+func (c *delayedCache) GetBudgets(context.Context, int64) ([]domain.Budget, string, bool, error) {
+	return nil, "unchanged-key", false, nil
+}
+func (c *delayedCache) SetBudgets(ctx context.Context, key string, _ []domain.Budget) error {
+	return c.Set(ctx, key, domain.Summary{})
+}
+
 func (c *delayedCache) Invalidate(context.Context, int64) error { return errors.New("unavailable") }
 func (c *delayedCache) TTL() time.Duration                      { return time.Minute }
 
@@ -37,7 +44,7 @@ func TestFailedInvalidationDiscardsAnEarlierBuild(t *testing.T) {
 	for _, expirePause := range []bool{false, true} {
 		t.Run(map[bool]string{false: "during pause", true: "after pause"}[expirePause], func(t *testing.T) {
 			cache := &delayedCache{}
-			s := &Service{reportCache: reportCache{cache: cache, log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+			s := &Service{readCache: readCache{cache: cache, log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 			started, finish := make(chan struct{}), make(chan struct{})
 			var once sync.Once
 			release := func() { once.Do(func() { close(finish) }) }
@@ -52,7 +59,7 @@ func TestFailedInvalidationDiscardsAnEarlierBuild(t *testing.T) {
 				done <- err
 			}()
 			<-started
-			s.invalidateReports(context.Background(), 1)
+			s.invalidateCache(context.Background(), 1)
 			if expirePause {
 				s.pausedUntil.Store(0)
 			}
@@ -87,19 +94,88 @@ func (c *activeStoreCache) Invalidate(context.Context, int64) error {
 }
 func TestInvalidationWaitsForActiveStores(t *testing.T) {
 	c := &activeStoreCache{started: make(chan struct{})}
-	s := &Service{reportCache: reportCache{cache: c, log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	s := &Service{readCache: readCache{cache: c, log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		_, _ = s.cachedSummary(context.Background(), 1, civil.Date{}, civil.Date{}, func() (domain.Summary, error) { return domain.Summary{}, nil })
 	}()
 	<-c.started
-	s.invalidateReports(context.Background(), 1)
+	s.invalidateCache(context.Background(), 1)
 	<-done
 	if c.invalidatedDuringStore.Load() {
 		t.Fatal("invalidation ran before an active store finished")
 	}
 	if remaining := time.Until(time.Unix(0, s.pausedUntil.Load())); remaining < c.TTL()-time.Second {
 		t.Fatalf("pause must cover a full TTL after the store, got %v", remaining)
+	}
+}
+
+type budgetRaceCache struct {
+	delayedCache
+	fail bool
+}
+
+func (c *budgetRaceCache) Invalidate(context.Context, int64) error {
+	if c.fail {
+		return errors.New("unavailable")
+	}
+	return nil
+}
+
+func TestBudgetBuildCannotOutliveInvalidation(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		for _, expirePause := range []bool{false, true} {
+			c := &budgetRaceCache{fail: fail}
+			s := &Service{readCache: readCache{cache: c, log: slog.New(slog.DiscardHandler)}}
+			started, finish := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			release := func() { once.Do(func() { close(finish) }) }
+			defer release()
+			done := make(chan error, 1)
+			go func() {
+				_, err := s.cachedBudgets(context.Background(), 1, func() ([]domain.Budget, error) {
+					close(started)
+					<-finish
+					return []domain.Budget{{UserID: 1, Category: "food", Limit: 10, Period: domain.PeriodMonth}}, nil
+				})
+				done <- err
+			}()
+			<-started
+			s.invalidateCache(context.Background(), 1)
+			if expirePause {
+				s.pausedUntil.Store(0)
+			}
+			release()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if c.sets != 0 {
+				t.Fatalf("old budget build stored after invalidation: failure=%v expired=%v", fail, expirePause)
+			}
+		}
+	}
+}
+
+func (c *activeStoreCache) SetBudgets(ctx context.Context, key string, _ []domain.Budget) error {
+	return c.Set(ctx, key, domain.Summary{})
+}
+
+func TestBudgetInvalidationWaitsForStore(t *testing.T) {
+	c := &activeStoreCache{started: make(chan struct{})}
+	s := &Service{readCache: readCache{cache: c, log: slog.New(slog.DiscardHandler)}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = s.cachedBudgets(context.Background(), 1, func() ([]domain.Budget, error) { return []domain.Budget{}, nil })
+	}()
+	<-c.started
+	s.invalidateCache(context.Background(), 1)
+	<-done
+	if c.invalidatedDuringStore.Load() {
+		t.Fatal("budget invalidation ran before the store ended")
+	}
+	if remaining := time.Until(time.Unix(0, s.pausedUntil.Load())); remaining < c.TTL()-time.Second {
+		t.Fatalf("short pause: %v", remaining)
 	}
 }

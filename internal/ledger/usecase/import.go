@@ -105,7 +105,7 @@ func (s *Service) Import(ctx context.Context, userID int64, rows []ImportRow) ([
 
 	for _, r := range results {
 		if r.Err == nil || errors.Is(r.Err, ErrCommitUncertain) {
-			s.invalidateReports(ctx, userID)
+			s.invalidateCache(ctx, userID)
 			break
 		}
 	}

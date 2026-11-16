@@ -6,7 +6,7 @@ services:
     ports: !override ["127.0.0.1:${HTTPS_GATEWAY_PORT:-8080}:8080"]
 
   caddy:
-    image: ${COMPOSE_PROJECT_NAME}-caddy:2.11.7-patched
+    image: ${COMPOSE_PROJECT_NAME}-caddy:2.11.9-patched
     build:
       context: .
       dockerfile: deploy/caddy.Dockerfile

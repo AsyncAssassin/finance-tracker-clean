@@ -1,15 +1,15 @@
-// Package redis is the report cache of the ledger in Redis.
+// Package redis caches the ledger's reports and budget lists in Redis.
 //
 // Keys:
 //
 //	report:v2:ver:{user}                          version of the user's data, INCR on every change
 //	report:v2:summary:{instance}:{user}:{version}:{from}:{to}  a built report, JSON, expires after the TTL
+//	budget:v1:list:{instance}:{user}:{version}     budget list, JSON, expires after its own TTL
 //
-// A report is looked up under the current version, so incrementing the
-// version invalidates all reports of the user at once without scanning
-// keys; the old ones simply expire. Version keys have no TTL, so with the
-// volatile-lru eviction policy Redis evicts reports under memory pressure
-// but never versions: a lost version would make old reports current again.
+// Data is looked up under the current version, so incrementing it invalidates
+// all reports and budget lists of the user without scanning keys; the old ones
+// simply expire. Version keys have no TTL, so volatile-lru evicts cached data
+// under memory pressure but never versions: a lost version could revive old data.
 package redis
 
 import (
@@ -34,40 +34,34 @@ import (
 // takes a new prefix, and old entries are never read.
 const prefix = "report:v2:"
 
-// Cache stores reports in Redis for ttl.
+// Cache stores reports and budget lists in Redis with separate TTLs.
 type Cache struct {
-	rdb      *redis.Client
-	ttl      time.Duration
-	instance string
+	rdb       *redis.Client
+	ttl       time.Duration
+	budgetTTL time.Duration
+	instance  string
 }
 
-var _ usecase.ReportCache = (*Cache)(nil)
+var _ usecase.Cache = (*Cache)(nil)
 
 // New returns a Cache on rdb.
-func New(rdb *redis.Client, ttl time.Duration) *Cache {
+func New(rdb *redis.Client, ttl, budgetTTL time.Duration) *Cache {
 	// A restart loses the service pause after a failed invalidation.
-	// Never reuse reports whose validity depended on the previous process.
-	return &Cache{rdb: rdb, ttl: ttl, instance: rand.Text()}
+	// Never reuse data whose validity depended on the previous process.
+	return &Cache{rdb: rdb, ttl: ttl, budgetTTL: budgetTTL, instance: rand.Text()}
 }
 
-// Open returns a client for a redis:// URL with short timeouts and no
+// Open returns a client for a validated host:port and database, with short timeouts and no
 // retries: a cache that answers slowly is worse than none, and the ledger
 // falls back to the database on any error.
-func Open(url, password string) (*redis.Client, error) {
-	opts, err := redis.ParseURL(url)
-	if err != nil {
-		// net/url and Redis parser errors may quote credentials or query values.
-		return nil, errors.New("invalid REDIS_URL: check scheme, host, port, database number and query parameters")
-	}
+func Open(addr string, db int, password string) *redis.Client {
+	opts := &redis.Options{Addr: addr, DB: db, Password: password}
 	opts.DialTimeout = 500 * time.Millisecond
-	if password != "" {
-		opts.Username, opts.Password = "ledger", password
-	}
 	opts.DialerRetries = 1 // one attempt per dial, not the default five
 	opts.ReadTimeout = 300 * time.Millisecond
 	opts.WriteTimeout = 300 * time.Millisecond
 	opts.MaxRetries = -1 // no retries of a failed command
-	return redis.NewClient(opts), nil
+	return redis.NewClient(opts)
 }
 
 // UseLogger sends the messages of the Redis client, such as failed dials,
@@ -92,7 +86,7 @@ func (c *Cache) reportKey(userID, version int64, from, to civil.Date) string {
 	return fmt.Sprintf("%ssummary:%s:%d:%d:%s:%s", prefix, c.instance, userID, version, from, to)
 }
 
-func (c *Cache) Get(ctx context.Context, userID int64, from, to civil.Date) (domain.Summary, string, bool, error) {
+func (c *Cache) version(ctx context.Context, userID int64) (int64, error) {
 	version, err := c.rdb.Get(ctx, versionKey(userID)).Int64()
 	var notNumber *strconv.NumError
 	switch {
@@ -101,14 +95,24 @@ func (c *Cache) Get(ctx context.Context, userID int64, from, to civil.Date) (dom
 		// report key has used, so whatever was cached becomes stale.
 		version = time.Now().UnixNano()
 		if err := c.rdb.Set(ctx, versionKey(userID), version, 0).Err(); err != nil {
-			return domain.Summary{}, "", false, fmt.Errorf("reset version: %w", err)
+			return 0, fmt.Errorf("reset version: %w", err)
 		}
-		return domain.Summary{}, c.reportKey(userID, version, from, to), false,
-			fmt.Errorf("%w: invalid version was reset", usecase.ErrBrokenEntry)
+		return version, fmt.Errorf("%w: invalid version was reset", usecase.ErrBrokenEntry)
 	case err != nil && !errors.Is(err, redis.Nil):
-		return domain.Summary{}, "", false, fmt.Errorf("get version: %w", err)
+		return 0, fmt.Errorf("get version: %w", err)
+	}
+	return version, nil
+}
+
+func (c *Cache) Get(ctx context.Context, userID int64, from, to civil.Date) (domain.Summary, string, bool, error) {
+	version, err := c.version(ctx, userID)
+	if err != nil && !errors.Is(err, usecase.ErrBrokenEntry) {
+		return domain.Summary{}, "", false, err
 	}
 	key := c.reportKey(userID, version, from, to)
+	if err != nil {
+		return domain.Summary{}, key, false, err
+	}
 	data, err := c.rdb.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return domain.Summary{}, key, false, nil
@@ -134,8 +138,8 @@ func (c *Cache) Set(ctx context.Context, key string, s domain.Summary) error {
 	return nil
 }
 
-// TTL is how long a stored report lives.
-func (c *Cache) TTL() time.Duration { return c.ttl }
+// TTL covers both kinds of cached data after failed invalidation.
+func (c *Cache) TTL() time.Duration { return max(c.ttl, c.budgetTTL) }
 
 func (c *Cache) Invalidate(ctx context.Context, userID int64) error {
 	if err := c.rdb.Incr(ctx, versionKey(userID)).Err(); err != nil {

@@ -20,20 +20,6 @@ import (
 
 const ttl = time.Minute
 
-func TestInvalidURLDoesNotExposeCredentials(t *testing.T) {
-	t.Parallel()
-	const private = "private-input-marker"
-	for _, suffix := range []string{"@localhost:bad/0", "@localhost/" + private, "@localhost/0?db=" + private} {
-		_, err := Open("redis://user:"+private+suffix, "")
-		if err == nil {
-			t.Fatal("invalid URL accepted")
-		}
-		if strings.Contains(err.Error(), private) {
-			t.Fatal("connection credentials or input reached a loggable error")
-		}
-	}
-}
-
 var (
 	oct1  = civil.New(2026, time.October, 1)
 	oct31 = civil.New(2026, time.October, 31)
@@ -57,7 +43,7 @@ type backend struct {
 	stop    func()              // takes Redis down
 }
 
-// backends returns miniredis always and a real Redis when TEST_REDIS_URL
+// backends returns miniredis always and a real Redis when TEST_REDIS_ADDR
 // is set. The real one gets its database flushed.
 func backends(t *testing.T) []backend {
 	t.Helper()
@@ -65,11 +51,8 @@ func backends(t *testing.T) []backend {
 	mini := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	t.Cleanup(func() { _ = mini.Close() })
 	list := []backend{{name: "miniredis", rdb: mini, advance: mr.FastForward, stop: mr.Close}}
-	if url := os.Getenv("TEST_REDIS_URL"); url != "" {
-		real, err := Open(url, "")
-		if err != nil {
-			t.Fatal(err)
-		}
+	if addr := os.Getenv("TEST_REDIS_ADDR"); addr != "" {
+		real := Open(addr, 15, "")
 		if err := real.FlushDB(context.Background()).Err(); err != nil {
 			t.Fatalf("flush the test database: %v", err)
 		}
@@ -82,7 +65,7 @@ func backends(t *testing.T) []backend {
 func TestCache(t *testing.T) {
 	for _, b := range backends(t) {
 		t.Run(b.name, func(t *testing.T) {
-			c := New(b.rdb, ttl)
+			c := New(b.rdb, ttl, 20*time.Second)
 			ctx := context.Background()
 
 			_, key, hit, err := c.Get(ctx, 1, oct1, oct31)
@@ -123,7 +106,7 @@ func TestCache(t *testing.T) {
 func TestStaleWriteIsNeverServed(t *testing.T) {
 	for _, b := range backends(t) {
 		t.Run(b.name, func(t *testing.T) {
-			c := New(b.rdb, ttl)
+			c := New(b.rdb, ttl, 20*time.Second)
 			ctx := context.Background()
 			_, key, _, _ := c.Get(ctx, 1, oct1, oct31)   // a report starts building
 			if err := c.Invalidate(ctx, 1); err != nil { // a transaction commits meanwhile
@@ -141,7 +124,7 @@ func TestStaleWriteIsNeverServed(t *testing.T) {
 
 func TestExpiry(t *testing.T) {
 	b := backends(t)[0] // only miniredis can move time
-	c := New(b.rdb, ttl)
+	c := New(b.rdb, ttl, 20*time.Second)
 	ctx := context.Background()
 	_, key, _, _ := c.Get(ctx, 1, oct1, oct31)
 	if err := c.Set(ctx, key, sample()); err != nil {
@@ -155,7 +138,7 @@ func TestExpiry(t *testing.T) {
 
 func TestBrokenEntryIsAMiss(t *testing.T) {
 	b := backends(t)[0]
-	c := New(b.rdb, ttl)
+	c := New(b.rdb, ttl, 20*time.Second)
 	ctx := context.Background()
 	_, key, _, _ := c.Get(ctx, 1, oct1, oct31)
 	b.rdb.Set(ctx, key, "{not json", ttl)
@@ -166,7 +149,7 @@ func TestBrokenEntryIsAMiss(t *testing.T) {
 
 func TestBrokenVersionIsReset(t *testing.T) {
 	b := backends(t)[0]
-	c := New(b.rdb, ttl)
+	c := New(b.rdb, ttl, 20*time.Second)
 	ctx := context.Background()
 	_, key, _, _ := c.Get(ctx, 1, oct1, oct31)
 	if err := c.Set(ctx, key, sample()); err != nil {
@@ -194,7 +177,7 @@ func TestBrokenVersionIsReset(t *testing.T) {
 
 func TestRedisDown(t *testing.T) {
 	b := backends(t)[0]
-	c := New(b.rdb, ttl)
+	c := New(b.rdb, ttl, 20*time.Second)
 	b.stop()
 	ctx := context.Background()
 	if _, _, _, err := c.Get(ctx, 1, oct1, oct31); err == nil {
@@ -209,17 +192,11 @@ func TestRedisDown(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	if _, err := Open("http://not-redis", ""); err == nil {
-		t.Error("Open accepted a non-redis URL")
-	}
-	rdb, err := Open("redis://localhost:6379/3", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	rdb := Open("localhost:6379", 3, "test-redis-password")
 	defer rdb.Close()
 	o := rdb.Options()
 	// go-redis stores MaxRetries -1 ("no retries") as 0.
-	if o.DB != 3 || o.MaxRetries > 0 || o.DialerRetries != 1 || o.ReadTimeout > time.Second || o.DialTimeout > time.Second {
+	if o.Addr != "localhost:6379" || o.Username != "" || o.Password != "test-redis-password" || o.DB != 3 || o.MaxRetries > 0 || o.DialerRetries != 1 || o.ReadTimeout > time.Second || o.DialTimeout > time.Second {
 		t.Errorf("options = db %d, retries %d, dial attempts %d, read %s, dial %s", o.DB, o.MaxRetries, o.DialerRetries, o.ReadTimeout, o.DialTimeout)
 	}
 }
@@ -228,7 +205,7 @@ func TestUseLogger(t *testing.T) {
 	var buf strings.Builder
 	UseLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer UseLogger(slog.New(slog.DiscardHandler))
-	rdb, _ := Open("redis://127.0.0.1:1/0", "") // nothing listens on port 1
+	rdb := Open("127.0.0.1:1", 0, "") // nothing listens on port 1
 	defer rdb.Close()
 	_ = rdb.Ping(context.Background()).Err()
 	if !strings.Contains(buf.String(), "redis client") {
@@ -250,7 +227,7 @@ func TestKeyLayout(t *testing.T) {
 // new cache instance must not reuse a possibly stale report from before it.
 func TestNewInstanceDoesNotReusePreviousReports(t *testing.T) {
 	b := backends(t)[0]
-	old := New(b.rdb, ttl)
+	old := New(b.rdb, ttl, 20*time.Second)
 	ctx := context.Background()
 	_, key, _, err := old.Get(ctx, 1, oct1, oct31)
 	if err != nil {
@@ -259,7 +236,7 @@ func TestNewInstanceDoesNotReusePreviousReports(t *testing.T) {
 	if err := old.Set(ctx, key, sample()); err != nil {
 		t.Fatal(err)
 	}
-	next := New(b.rdb, ttl)
+	next := New(b.rdb, ttl, 20*time.Second)
 	_, newKey, hit, err := next.Get(ctx, 1, oct1, oct31)
 	if err != nil || hit || newKey == key {
 		t.Fatalf("new instance reused an old report: hit=%v sameKey=%v err=%v", hit, newKey == key, err)
@@ -268,7 +245,7 @@ func TestNewInstanceDoesNotReusePreviousReports(t *testing.T) {
 
 func TestBrokenCacheErrorDoesNotExposeData(t *testing.T) {
 	b := backends(t)[0]
-	c := New(b.rdb, ttl)
+	c := New(b.rdb, ttl, 20*time.Second)
 	ctx := context.Background()
 	const userID = 987654321
 	const marker = "private-cache-marker"

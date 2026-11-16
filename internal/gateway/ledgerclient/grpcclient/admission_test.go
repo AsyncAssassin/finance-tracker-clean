@@ -53,7 +53,11 @@ func (*delayedInvalidation) Get(context.Context, int64, civil.Date, civil.Date) 
 	return domain.Summary{}, "key", false, nil
 }
 func (*delayedInvalidation) Set(context.Context, string, domain.Summary) error { return nil }
-func (*delayedInvalidation) TTL() time.Duration                                { return time.Minute }
+func (*delayedInvalidation) GetBudgets(context.Context, int64) ([]domain.Budget, string, bool, error) {
+	return nil, "key", false, nil
+}
+func (*delayedInvalidation) SetBudgets(context.Context, string, []domain.Budget) error { return nil }
+func (*delayedInvalidation) TTL() time.Duration                                        { return time.Minute }
 func (c *delayedInvalidation) Invalidate(context.Context, int64) error {
 	// Hold the first call deterministically; no external Redis or timer is needed.
 	c.once.Do(func() { close(c.started) })
@@ -66,7 +70,7 @@ func TestCanceledCallsRemainBoundedUntilLedgerFinishes(t *testing.T) {
 	repo := &observedRepository{Repository: memory.New(), reached: make(chan struct{}, 64)}
 	cache := &delayedInvalidation{release: make(chan struct{}), started: make(chan struct{})}
 	log := slog.New(slog.DiscardHandler)
-	srv := grpcserver.New(usecase.New(repo, usecase.WithReportCache(cache, log)), log)
+	srv := grpcserver.New(usecase.New(repo, usecase.WithCache(cache, log)), log)
 	ln := bufconn.Listen(1 << 20)
 	go func() { _ = srv.Serve(ln) }()
 	var once sync.Once

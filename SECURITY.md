@@ -29,4 +29,27 @@
 [порядок допуска](docs/operations.md#закрытый-пилот-и-квоты) и
 [обновление и откат](docs/operations.md#обновление-и-откат).
 
+## Зависимости HTTPS-образа
+
+Образ собирает Caddy v2.11.9 со стандартными модулями и `go-jose/v4 v4.1.9`.
+Уязвимая ветка `go-jose/v3`, для которой нет исправления
+[CVE-2026-116587](https://github.com/go-jose/go-jose/security/advisories/GHSA-mgcc-cww5-fp2q),
+исключена из импортируемых пакетов и бинарника обновлением зависимостей.
+Исключений для этой уязвимости в сканерах нет.
+
+Совместимый переход требует совместного обновления `go.step.sm/crypto`
+и `smallstep/certificates`. В [go.mod](deploy/caddy/go.mod) закреплены
+crypto v0.92.0 и certificates v0.30.3-0.20261110092624-0d8a80647845.
+Последняя версия является точным
+[upstream-коммитом Smallstep](https://github.com/smallstep/certificates/commit/0d8a806478454d360e46b1bc0d19dcb5673fb246),
+а не релизным тегом. До перехода на совместимый релиз сохраняйте этот pin:
+откат только certificates возвращает несовместимые API, а откат всей пары может
+вернуть уязвимую библиотеку.
+
+CI запрещает импорт `go-jose/v3` и проверяет совместимость TLS, PKI, ACME
+и JOSE тестами upstream-пакетов с `-race`. Перед установкой нужны также
+[сканирование готового образа и проверка HTTPS](docs/testing.md#проверка-caddy-и-https).
+Производственный [Caddyfile](deploy/Caddyfile) использует публичный ACME и reverse
+proxy; внутренний удостоверяющий центр и ACME-сервер в нём не включены.
+
 [README](README.md) · [Проверки](docs/testing.md)

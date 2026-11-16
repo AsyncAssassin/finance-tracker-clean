@@ -37,7 +37,14 @@ jobs:
         run: go mod tidy -diff
       - name: Caddy build module
         working-directory: deploy/caddy
-        run: go vet -tags nobadger,nomysql,nopgx ./... && go mod tidy -diff
+        run: |
+          go vet -tags nobadger,nomysql,nopgx ./...
+          go mod tidy -diff
+          caddy_deps=$(go list -deps -tags nobadger,nomysql,nopgx ./...)
+          if printf '%s\n' "$caddy_deps" | grep -E '^github.com/go-jose/go-jose/v3(/|$)' > /dev/null; then
+            echo 'Caddy must not depend on the unpatched go-jose/v3 (CVE-2026-116587)'
+            exit 1
+          fi
 
       - name: gosu build module
         working-directory: deploy/gosu
@@ -47,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgres://localhost:5432/finance_test?sslmode=disable
-      TEST_REDIS_URL: redis://localhost:6379/15
+      TEST_REDIS_ADDR: localhost:6379
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -139,6 +146,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache-dependency-path: deploy/caddy/go.sum
+      - name: Caddy PKI compatibility
+        working-directory: deploy/caddy
+        run: |
+          go test -race -count=1 -tags nobadger,nomysql,nopgx \
+            github.com/caddyserver/caddy/v2/modules/caddytls \
+            github.com/caddyserver/caddy/v2/modules/caddypki \
+            github.com/caddyserver/caddy/v2/modules/caddypki/acmeserver \
+            github.com/smallstep/certificates/authority/provisioner \
+            go.step.sm/crypto/jose \
+            github.com/go-jose/go-jose/v4
       - name: validate HTTPS configuration without issuing certificates
         run: |
           docker compose --env-file /dev/null -f compose.yaml -f compose.https.yaml config --quiet

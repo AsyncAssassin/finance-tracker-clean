@@ -1,7 +1,7 @@
 // Command ledger is the gRPC service that owns transactions, budgets and
 // reports. It stores them in PostgreSQL when DATABASE_URL is set, using a schema
-// prepared by cmd/migrate, and in memory otherwise. With REDIS_URL it
-// caches reports in Redis for REPORT_CACHE_TTL.
+// prepared by cmd/migrate, and in memory otherwise. With REDIS_ADDR it
+// caches reports and budget lists in Redis.
 //
 // With -healthcheck it instead asks a running ledger on GRPC_ADDR for its
 // health and exits with 0 when it serves; the container health check uses
@@ -72,7 +72,7 @@ func start() int {
 	}
 	defer closeRepo()
 
-	opts, closeCache := openReportCache(ctx, cfg, log)
+	opts, closeCache := openCache(ctx, cfg, log)
 	defer closeCache()
 	opts = append(opts, usecase.WithImportWorkers(cfg.ImportWorkers))
 	srv := grpcserver.New(usecase.New(repo, opts...), log)
@@ -98,34 +98,28 @@ func openRepository(ctx context.Context, cfg config.Ledger, log *slog.Logger) (u
 	return postgres.New(pool), pool.Close, nil
 }
 
-// openReportCache returns the service option for the Redis report cache
-// when REDIS_URL is set. An unreachable Redis does not stop the ledger:
-// the client reconnects by itself, and until then reports are built from
-// the database.
-func openReportCache(ctx context.Context, cfg config.Ledger, log *slog.Logger) ([]usecase.Option, func()) {
-	if cfg.RedisURL == "" {
-		log.Warn("REDIS_URL is not set: reports are built without a cache")
+// openCache enables caching with PostgreSQL. An unreachable Redis does not
+// stop the ledger: reads use the database until the client reconnects.
+func openCache(ctx context.Context, cfg config.Ledger, log *slog.Logger) ([]usecase.Option, func()) {
+	if cfg.RedisAddr == "" {
+		log.Info("Redis cache is disabled: REDIS_ADDR is empty")
 		return nil, func() {}
 	}
 	if cfg.DatabaseURL == "" {
 		// Redis outlives this process, the in-memory store does not: after
 		// a restart, cached reports would describe data that is gone.
-		log.Warn("REDIS_URL is ignored with the in-memory store: reports are built without a cache")
+		log.Info("Redis cache is disabled with the in-memory store")
 		return nil, func() {}
 	}
 	rediscache.UseLogger(log)
-	rdb, err := rediscache.Open(cfg.RedisURL, cfg.RedisPassword)
-	if err != nil {
-		log.Error("bad REDIS_URL: reports are built without a cache", "error", err)
-		return nil, func() {}
-	}
+	rdb := rediscache.Open(cfg.RedisAddr, cfg.RedisDB, cfg.RedisPassword)
 	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
-		log.Warn("report cache is not reachable yet, reports are built from the database until it is", "error", err)
+		log.Warn("Redis cache is not reachable yet, reads use the database until it is", "error", err)
 	} else {
-		log.Info("report cache ready", "ttl", cfg.ReportCacheTTL.String())
+		log.Info("Redis cache ready", "report_ttl", cfg.ReportCacheTTL.String(), "budget_ttl", cfg.BudgetCacheTTL.String())
 	}
-	cache := rediscache.New(rdb, cfg.ReportCacheTTL)
-	return []usecase.Option{usecase.WithReportCache(cache, log)}, func() { _ = rdb.Close() }
+	cache := rediscache.New(rdb, cfg.ReportCacheTTL, cfg.BudgetCacheTTL)
+	return []usecase.Option{usecase.WithCache(cache, log)}, func() { _ = rdb.Close() }
 }

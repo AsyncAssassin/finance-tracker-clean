@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -150,9 +151,11 @@ type Ledger struct {
 	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT, how long to wait for running calls
 	DatabaseURL     string        // DATABASE_URL; empty means an in-memory store
 	DBConnectWait   time.Duration // DB_CONNECT_WAIT, how long to wait for the database at startup
-	RedisURL        string        // REDIS_URL of the report cache; empty means no cache
+	RedisAddr       string        // REDIS_ADDR host:port; explicitly empty disables the cache
+	RedisDB         int           // REDIS_DB, database index
 	RedisPassword   string        // REDIS_PASSWORD, separate from the loggable endpoint
 	ReportCacheTTL  time.Duration // REPORT_CACHE_TTL, how long a cached report lives
+	BudgetCacheTTL  time.Duration // BUDGET_CACHE_TTL, how long a cached budget list lives
 	ImportWorkers   int           // IMPORT_WORKERS, how many import rows are stored at once
 	DBMaxConns      int32         // DB_MAX_CONNS, the size of the database connection pool
 }
@@ -166,10 +169,23 @@ func LoadLedger() (Ledger, error) {
 		LogLevel:      String("LOG_LEVEL", "info"),
 		LogFormat:     String("LOG_FORMAT", "json"),
 		DatabaseURL:   String("DATABASE_URL", ""),
-		RedisURL:      String("REDIS_URL", ""),
 		RedisPassword: os.Getenv("REDIS_PASSWORD"),
 	}
 	var err error
+	var configured bool
+	if cfg.RedisAddr, configured = os.LookupEnv("REDIS_ADDR"); !configured {
+		cfg.RedisAddr = "localhost:6379"
+	}
+	if cfg.RedisAddr != "" {
+		host, port, splitErr := net.SplitHostPort(cfg.RedisAddr)
+		n, portErr := strconv.Atoi(port)
+		if splitErr != nil || host == "" || strings.ContainsAny(host, "/@?#\\ \t\r\n") || portErr != nil || n < 1 || n > 65535 {
+			return Ledger{}, fmt.Errorf("REDIS_ADDR: expected host:port without credentials or a URL scheme")
+		}
+	}
+	if cfg.RedisDB, err = intInRange("REDIS_DB", 0, 0, 2147483647); err != nil {
+		return Ledger{}, err
+	}
 	if cfg.ShutdownTimeout, err = Duration("SHUTDOWN_TIMEOUT", 10*time.Second); err != nil {
 		return Ledger{}, err
 	}
@@ -177,6 +193,9 @@ func LoadLedger() (Ledger, error) {
 		return Ledger{}, err
 	}
 	if cfg.ReportCacheTTL, err = positiveDuration("REPORT_CACHE_TTL", 5*time.Minute); err != nil {
+		return Ledger{}, err
+	}
+	if cfg.BudgetCacheTTL, err = positiveDuration("BUDGET_CACHE_TTL", 20*time.Second); err != nil {
 		return Ledger{}, err
 	}
 	if cfg.ImportWorkers, err = intInRange("IMPORT_WORKERS", 4, 1, 64); err != nil {

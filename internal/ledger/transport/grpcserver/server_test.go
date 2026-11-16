@@ -389,7 +389,7 @@ func TestSummaryCacheHeader(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	svc := usecase.New(memory.New(), usecase.WithReportCache(rediscache.New(rdb, time.Minute), slog.New(slog.DiscardHandler)))
+	svc := usecase.New(memory.New(), usecase.WithCache(rediscache.New(rdb, time.Minute, 20*time.Second), slog.New(slog.DiscardHandler)))
 	srv := grpcserver.New(svc, slog.New(slog.DiscardHandler))
 	ln := bufconn.Listen(1 << 20)
 	go func() { _ = srv.Serve(ln) }()

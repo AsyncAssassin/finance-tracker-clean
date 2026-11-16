@@ -61,15 +61,15 @@ race: ## Тесты с детектором гонок
 # TRUNCATE) и в базе Redis 15 (FLUSHDB), чтобы не трогать данные стека.
 # Учётные данные идут через PGUSER/PGPASSWORD, а не в URL. Пароль не нужно экранировать.
 TEST_DATABASE_URL ?= postgres://localhost:$(POSTGRES_PORT)/finance_test?sslmode=disable
-TEST_REDIS_URL ?= redis://localhost:$(REDIS_PORT)/15
-TEST_DB_ENV = PGUSER=$(POSTGRES_USER) PGPASSWORD=$(POSTGRES_PASSWORD) TEST_DATABASE_URL=$(TEST_DATABASE_URL) TEST_REDIS_URL=$(TEST_REDIS_URL)
+TEST_REDIS_ADDR ?= localhost:$(REDIS_PORT)
+TEST_DB_ENV = PGUSER=$(POSTGRES_USER) PGPASSWORD=$(POSTGRES_PASSWORD) TEST_DATABASE_URL=$(TEST_DATABASE_URL) TEST_REDIS_ADDR=$(TEST_REDIS_ADDR)
 test-db: db ## Создать базу finance_test для интеграционных тестов, если её нет
 	@$(DEV_COMPOSE) exec -T db sh -c 'until pg_isready -q -U "$$POSTGRES_USER"; do sleep 1; done; \
 		psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc "SELECT 1 FROM pg_database WHERE datname = '"'"'finance_test'"'"'" | grep -q 1 \
 		|| createdb -U "$$POSTGRES_USER" finance_test'
 
 INTEGRATION_PKGS = ./internal/ledger/repo/postgres/... ./internal/auth/repo/postgres/... ./internal/pkg/pgkit/... ./internal/ledger/cache/...
-test-integration: test-db ## Интеграционные тесты на PostgreSQL и Redis: репозитории, pgkit, кеш отчётов
+test-integration: test-db ## Интеграционные тесты на PostgreSQL и Redis: репозитории, pgkit, кеш отчётов и бюджетов
 	@$(TEST_DB_ENV) $(GO) test -race -count=1 $(INTEGRATION_PKGS)
 
 E2E_BASE_URL ?= http://localhost:8080

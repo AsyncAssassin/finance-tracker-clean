@@ -28,7 +28,7 @@ const (
 type Service struct {
 	repo Repository
 	now  func() time.Time
-	reportCache
+	readCache
 	// importSlots bounds the import rows stored at once, see WithImportWorkers.
 	importSlots chan struct{}
 }
@@ -59,7 +59,7 @@ func New(repo Repository, opts ...Option) *Service {
 func (s *Service) CreateTransaction(ctx context.Context, userID int64, in domain.TransactionInput) (domain.Transaction, error) {
 	created, err := s.createTransaction(ctx, userID, in)
 	if err == nil || errors.Is(err, ErrCommitUncertain) {
-		s.invalidateReports(ctx, userID)
+		s.invalidateCache(ctx, userID)
 	}
 	if err != nil {
 		return domain.Transaction{}, err
@@ -158,7 +158,7 @@ func (s *Service) UpsertBudget(ctx context.Context, userID int64, in domain.Budg
 	}
 	created, err := s.repo.UpsertBudget(ctx, b)
 	if err == nil || errors.Is(err, ErrCommitUncertain) {
-		s.invalidateReports(ctx, userID)
+		s.invalidateCache(ctx, userID)
 	}
 	if err != nil {
 		return domain.Budget{}, false, fmt.Errorf("upsert budget: %w", err)
@@ -168,18 +168,20 @@ func (s *Service) UpsertBudget(ctx context.Context, userID int64, in domain.Budg
 
 // ListBudgets returns the budgets of the user sorted by category.
 func (s *Service) ListBudgets(ctx context.Context, userID int64) ([]domain.Budget, error) {
-	list, err := s.repo.ListBudgets(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("list budgets: %w", err)
-	}
-	if list == nil {
-		list = []domain.Budget{}
-	}
-	return list, nil
+	return s.cachedBudgets(ctx, userID, func() ([]domain.Budget, error) {
+		list, err := s.repo.ListBudgets(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("list budgets: %w", err)
+		}
+		if list == nil {
+			list = []domain.Budget{}
+		}
+		return list, nil
+	})
 }
 
 // Summary returns the expense report for [from, to], from the report cache
-// when one is configured (see WithReportCache). Both dates are required and
+// when one is configured (see WithCache). Both dates are required and
 // the range may not exceed MaxSummaryYears.
 func (s *Service) Summary(ctx context.Context, userID int64, from, to civil.Date) (Report, error) {
 	v := new(domain.ValidationError)

@@ -39,12 +39,12 @@ func (b *logBuffer) String() string {
 	return b.sb.String()
 }
 
-func newCachedService(t *testing.T, cache usecase.ReportCache) (*usecase.Service, *logBuffer) {
+func newCachedService(t *testing.T, cache usecase.Cache) (*usecase.Service, *logBuffer) {
 	t.Helper()
 	logs := &logBuffer{}
 	clock := func() time.Time { return time.Date(2026, time.October, 3, 12, 0, 0, 0, time.UTC) }
 	log := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	return usecase.New(memory.New(), usecase.WithClock(clock), usecase.WithReportCache(cache, log)), logs
+	return usecase.New(memory.New(), usecase.WithClock(clock), usecase.WithCache(cache, log)), logs
 }
 
 func redisCache(t *testing.T) (*rediscache.Cache, *miniredis.Miniredis) {
@@ -52,7 +52,7 @@ func redisCache(t *testing.T) (*rediscache.Cache, *miniredis.Miniredis) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
 	t.Cleanup(func() { _ = rdb.Close() })
-	return rediscache.New(rdb, time.Minute), mr
+	return rediscache.New(rdb, time.Minute, 20*time.Second), mr
 }
 
 func summary(t *testing.T, s *usecase.Service) usecase.Report {
@@ -134,6 +134,16 @@ func (c *flakyCache) Get(context.Context, int64, civil.Date, civil.Date) (domain
 }
 
 func (c *flakyCache) Set(context.Context, string, domain.Summary) error {
+	c.sets.Add(1)
+	return c.setErr
+}
+
+func (c *flakyCache) GetBudgets(context.Context, int64) ([]domain.Budget, string, bool, error) {
+	c.gets.Add(1)
+	return nil, "key", false, c.getErr
+}
+
+func (c *flakyCache) SetBudgets(context.Context, string, []domain.Budget) error {
 	c.sets.Add(1)
 	return c.setErr
 }
@@ -248,7 +258,7 @@ func TestBrokenEntryIsRebuilt(t *testing.T) {
 func TestNilLoggerKeepsTheDefault(t *testing.T) {
 	t.Parallel()
 	cache, _ := redisCache(t)
-	s := usecase.New(memory.New(), usecase.WithReportCache(cache, nil))
+	s := usecase.New(memory.New(), usecase.WithCache(cache, nil))
 	if _, err := s.Summary(context.Background(), user, oct1, oct31); err != nil {
 		t.Fatal(err)
 	}

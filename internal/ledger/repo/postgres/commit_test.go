@@ -97,7 +97,7 @@ func lostCommitPool(t *testing.T, direct *pgxpool.Pool, onCommit func()) (*pgxpo
 }
 
 type failingInvalidation struct {
-	usecase.ReportCache
+	usecase.Cache
 	fail bool
 }
 
@@ -105,7 +105,7 @@ func (c *failingInvalidation) Invalidate(ctx context.Context, id int64) error {
 	if c.fail {
 		return io.ErrUnexpectedEOF
 	}
-	return c.ReportCache.Invalidate(ctx, id)
+	return c.Cache.Invalidate(ctx, id)
 }
 
 func TestLostCommitInvalidatesReports(t *testing.T) {
@@ -128,8 +128,8 @@ func TestLostCommitInvalidatesReports(t *testing.T) {
 				mr := miniredis.RunT(t)
 				rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
 				defer rdb.Close()
-				cache := &failingInvalidation{ReportCache: rediscache.New(rdb, time.Minute), fail: fail}
-				svc := usecase.New(postgres.New(proxy), usecase.WithReportCache(cache, slog.New(slog.DiscardHandler)))
+				cache := &failingInvalidation{Cache: rediscache.New(rdb, time.Minute, 20*time.Second), fail: fail}
+				svc := usecase.New(postgres.New(proxy), usecase.WithCache(cache, slog.New(slog.DiscardHandler)))
 				for range 2 {
 					if _, err := svc.Summary(ctx, 1, date, date); err != nil {
 						t.Fatal(err)
@@ -138,6 +138,12 @@ func TestLostCommitInvalidatesReports(t *testing.T) {
 				before, err := svc.Summary(ctx, 1, date, date)
 				if err != nil || before.Cache != usecase.CacheHit || len(before.Categories) != 0 {
 					t.Fatal("cache was not primed")
+				}
+				for range 2 {
+					list, err := svc.ListBudgets(ctx, 1)
+					if err != nil || len(list) != 0 {
+						t.Fatalf("budget cache was not primed: %+v %v", list, err)
+					}
 				}
 				in := domain.TransactionInput{Category: "food", Amount: 100, Date: date, ExternalID: "test-commit-key"}
 				armed.Store(true)
@@ -171,6 +177,12 @@ func TestLostCommitInvalidatesReports(t *testing.T) {
 				}
 				if err != nil || rows != 1 || after.Cache != want || len(after.Categories) != 1 {
 					t.Fatalf("stale report: rows=%d cache=%s categories=%d error=%v", rows, after.Cache, len(after.Categories), err)
+				}
+				if kind == "budget" {
+					list, err := svc.ListBudgets(ctx, 1)
+					if err != nil || len(list) != 1 || list[0].Limit != 100 {
+						t.Fatalf("stale budgets after lost COMMIT: %+v %v", list, err)
+					}
 				}
 				if kind != "budget" {
 					if after.Total != 100 {
